@@ -1,0 +1,13 @@
+node_modules/
+dist/
+data/
+*.exe
+*.log
+*.err
+.env
+.env.*
+!.env.example
+
+# Skill & konfigurasi agent lokal - tidak di-commit
+.opencode/
+AGENTS.md

@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build web
+        run: bun run build:web
+
+      - name: Compile Windows exe
+        run: |
+          bun build --compile \
+            --target bun-windows-x64 \
+            src/server/index.ts \
+            --outfile antrian-client.exe
+
+      - name: Package release
+        run: |
+          mkdir -p release
+          cp antrian-client.exe release/
+          cp -r dist release/
+          cp .env.example release/
+          cp LICENSE release/
+          cp README.md release/
+          cd release
+          zip -r "../antrian-client-${GITHUB_REF_NAME}-windows-amd64.zip" .
+
+      - name: Checksum & publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum antrian-client-${GITHUB_REF_NAME}-windows-amd64.zip > checksums.txt
+          gh release create "${GITHUB_REF_NAME}" antrian-client-${GITHUB_REF_NAME}-windows-amd64.zip checksums.txt \
+            --title "${GITHUB_REF_NAME}" --generate-notes --verify-tag
