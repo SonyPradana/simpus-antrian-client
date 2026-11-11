@@ -57,6 +57,9 @@ To use the real Go API: copy `env/production.env.example` to
 `bun run start`. Without a key, APM API requests are rejected with
 `APM_NOT_CONFIGURED`.
 
+Evaluating without a Go server? Copy `env/development.env` to
+`env/production.env`, or set `MOCK_API=1`, and the app runs on fixture data.
+
 All calls use the facade `/api/v1/apm/*` (see
 [`docs/conventions.md`](docs/conventions.md)). Location names are not sent; the
 client only sends `poscheck_id`.
