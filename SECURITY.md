@@ -29,5 +29,5 @@ key, then report it.
   `AUTH_PASSWORD` is set.
 - Every call to the Go server goes through the BFF; the API key is never sent
   to the browser.
-- Mock mode is the default, so no outbound traffic happens without explicit
-  configuration.
+- Mock mode is opt-in through `MOCK_API=1`. The default is the real Go API, so
+  a production deploy never silently serves fixture data.

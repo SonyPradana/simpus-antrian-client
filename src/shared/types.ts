@@ -52,8 +52,6 @@ export interface Settings {
   defaultPoscheckId: string;
   defaultLokasi: string;
   defaultTenaga: string;
-  /** pakai mock, bukan API Go sungguhan */
-  mock: boolean;
 }
 
 /** Event yang di-push ke UI lewat SSE. */

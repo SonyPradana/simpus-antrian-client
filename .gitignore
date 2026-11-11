@@ -1,12 +1,15 @@
-node_modules/
+﻿node_modules/
 dist/
 data/
 *.exe
 *.log
 *.err
+
+# Env berisi secret tidak di-commit. Template `.example` tetap di-commit.
 .env
-.env.*
-!.env.example
+.env.local
+env/production.env
+env/staging.env
 
 # Skill & konfigurasi agent lokal - tidak di-commit
 .opencode/

@@ -37,7 +37,7 @@ jobs:
           mkdir -p release
           cp antrian-client.exe release/
           cp -r dist release/
-          cp .env.example release/
+          cp -r env release/
           cp LICENSE release/
           cp README.md release/
           cd release

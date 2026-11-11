@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -118,21 +117,13 @@ export function SettingsDialog() {
                   placeholder="http://localhost:8080"
                 />
               </div>
-              <label className="flex items-start gap-2 text-sm">
-                <Checkbox
-                  checked={settings.mock}
-                  onCheckedChange={(checked) => patch({ mock: checked === true })}
-                />
-                <span>
-                  <span className="font-medium">Mode mock</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Pakai data contoh, tidak menyentuh Go API sungguhan.
-                  </span>
-                </span>
-              </label>
               <p className="text-xs text-muted-foreground">
                 API key APM dibaca dari env <code>APM_API_KEY</code> di BFF. Key tidak disimpan
                 di browser maupun SQLite.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Mode mock dikonfigurasi lewat environment BFF (<code>MOCK_API=1</code>), bukan
+                dari browser.
               </p>
             </section>
 

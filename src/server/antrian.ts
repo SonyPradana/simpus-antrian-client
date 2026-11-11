@@ -6,7 +6,7 @@
  *  - `createMockApi()`    -> fixture lokal (src/server/mock.ts)
  *
  * Catatan: TIDAK ada request ke Go API yang dieksekusi di repo ini kecuali
- * `mock` dimatikan secara eksplisit lewat settings.
+ * `MOCK_API=0` diset eksplisit di environment BFF.
  */
 import type { z } from "zod";
 import {

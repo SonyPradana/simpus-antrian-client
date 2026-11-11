@@ -117,7 +117,6 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultPoscheckId: "",
   defaultLokasi: "",
   defaultTenaga: "",
-  mock: true,
 };
 
 export class Store {

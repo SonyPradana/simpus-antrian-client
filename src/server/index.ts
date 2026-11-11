@@ -8,21 +8,25 @@
  *  4. menyajikan UI hasil build Vite
  */
 import { existsSync } from "node:fs";
-import path from "node:path";
 import { staticPlugin } from "@elysiajs/static";
 import { Elysia, t } from "elysia";
 import { z } from "zod";
 import { AntrianApiError, createAntrianApi, type AntrianApi } from "./antrian";
 import { SESSION_COOKIE, createSessionStore, type SessionStore } from "./auth";
 import { BatchExecutor, JobControl, JobEvents } from "./batch";
+import {
+  APM_API_KEY,
+  APM_BASE_URL,
+  APP_ENV,
+  DB_PATH,
+  DIST_DIR,
+  MOCK_API,
+  PORT,
+} from "./config";
 import { Store } from "./db";
 import { createMockApi } from "./mock";
 import { APMQueueBodySchema } from "@/shared/schema";
 import type { Job, QueueItem } from "@/shared/types";
-
-const PORT = Number(process.env.PORT ?? 3000);
-const DB_PATH = process.env.ANTRIAN_DB ?? path.join(process.cwd(), "data", "antrian.db");
-const DIST_DIR = path.join(process.cwd(), "dist");
 
 const CACHE_TTL = {
   poli: 10 * 60_000,
@@ -36,25 +40,22 @@ const sessions: SessionStore = createSessionStore(store);
 
 /* --------------------------- api resolution --------------------------- */
 
-const APM_API_KEY = (process.env.APM_API_KEY ?? "").trim();
-
 let apiCache: { key: string; api: AntrianApi } | null = null;
 
 /**
- * API aktif mengikuti setting. Default `mock: true` -> TIDAK ada request ke
- * Go API sampai user mematikan mock di Settings.
+ * API aktif ditentukan environment, bukan settings di browser/SQLite.
+ * `MOCK_API=1` -> fixture lokal; selain itu -> HTTP ke Go API.
  *
  * Key APM hanya dibaca dari env BFF; tidak pernah dikirim ke browser.
  */
 function getApi(): AntrianApi {
   const settings = store.getSettings();
-  const key = `${settings.mock ? "mock" : "http"}:${settings.apiBaseUrl}:${APM_API_KEY ? "key" : "nokey"}`;
+  const baseUrl = APM_BASE_URL || settings.apiBaseUrl;
+  const key = `${MOCK_API ? "mock" : "http"}:${baseUrl}:${APM_API_KEY ? "key" : "nokey"}`;
   if (!apiCache || apiCache.key !== key) {
     apiCache = {
       key,
-      api: settings.mock
-        ? createMockApi()
-        : createAntrianApi(settings.apiBaseUrl, APM_API_KEY),
+      api: MOCK_API ? createMockApi() : createAntrianApi(baseUrl, APM_API_KEY),
     };
     store.clearCache();
   }
@@ -182,7 +183,7 @@ const app = new Elysia()
 
   .get("/api/health", () => ({
     status: "ok",
-    mock: store.getSettings().mock,
+    mock: MOCK_API,
     apmConfigured: APM_API_KEY !== "",
   }))
 
@@ -268,7 +269,6 @@ const app = new Elysia()
         defaultPoscheckId: z.string().optional(),
         defaultLokasi: z.string().optional(),
         defaultTenaga: z.string().optional(),
-        mock: z.boolean().optional(),
       })
       .safeParse(body);
     if (!parsed.success) {
@@ -473,9 +473,16 @@ if (existsSync(DIST_DIR)) {
 app.listen(PORT);
 
 console.log(`[antrian] BFF listen :${PORT}`);
+console.log(`[antrian] env        ${APP_ENV}`);
 console.log(`[antrian] db         ${DB_PATH}`);
-console.log(`[antrian] api        ${store.getSettings().mock ? "MOCK (tidak menyentuh Go API)" : store.getSettings().apiBaseUrl}`);
-if (!store.getSettings().mock && APM_API_KEY === "") {
+console.log(
+  `[antrian] api        ${
+    MOCK_API
+      ? "MOCK (tidak menyentuh Go API)"
+      : APM_BASE_URL || store.getSettings().apiBaseUrl
+  }`,
+);
+if (!MOCK_API && APM_API_KEY === "") {
   console.warn("[antrian] APM_API_KEY kosong - facade /api/v1/apm/* akan menolak request");
 }
 

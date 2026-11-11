@@ -52,7 +52,7 @@ test for it.
 
 ```
 UI (web/) -> /api/* (BFF Elysia) -> AntrianApi -> Go API
-                                    \-> mock (default)
+                                    \-> mock (MOCK_API=1)
 ```
 
 The browser **never** calls the Go API directly. Everything goes through the
@@ -77,6 +77,22 @@ APM rules that apply (server contract §2.9):
   `mode`/`can_register`. Use `actionForLookup` in `src/shared/mode.ts`, do not
   guess.
 - Lookup uses `pcare=false`; registration uses `pcare=true`.
+
+### Environment
+
+`src/server/config.ts` loads `env/<NODE_ENV>.env` then `.env`, and never
+overrides a variable that is already set. `NODE_ENV` defaults to `production`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `NODE_ENV` | `production` | picks `env/<env>.env` |
+| `MOCK_API` | `0` | `1` = fixture, `0` = real Go API |
+| `APM_BASE_URL` | settings | overrides the Settings base URL |
+| `APM_API_KEY` | *(empty)* | APM facade key, BFF only |
+| `AUTH_PASSWORD` | *(empty)* | enables login |
+
+Mock is **not** part of `Settings` and is not editable from the UI; it is
+decided at process start.
 
 ## 4. Adding a shadcn component
 
@@ -132,6 +148,6 @@ Follow the pattern in `src/server/index.ts`:
 | Toast does not follow theme | `ThemeProvider` must be above `Toaster` (`main.tsx`). |
 | NIK broken from Excel | `normalizeIdentifier` rejects scientific notation / wrong length. |
 | `400 INVALID_INPUT` on queue | Body contains `lokasi` (or identifier in `blank` mode). Send `poscheck_id` only. |
-| `503 APM_NOT_CONFIGURED` | `APM_API_KEY` not set in BFF, or mock off without key. |
+| `503 APM_NOT_CONFIGURED` | `APM_API_KEY` not set in BFF, or `MOCK_API=0` without key. |
 | All APM requests rejected 401 | `x-api-key` header wrong/empty; key must not go in settings/browser. |
 | `SQLITE_CANTOPEN` when running exe | `data/` folder missing. Since v0.1.0 `Store` creates it automatically. |
