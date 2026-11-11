@@ -23,42 +23,36 @@ The Go server is optional — the app runs fully against mock data:
 ```powershell
 bun install
 bun run dev      # http://localhost:5173  (hot reload, BFF :3000, mock)
-bun run staging  # BFF only, env/staging.env
 ```
 
 To use the production build:
 
 ```powershell
 bun run build    # vite build + compile antrian-client.exe
-bun run start    # http://localhost:3000, env/production.env
+bun run start    # http://localhost:3000
 ```
 
 ## Mock mode vs real API
 
 Mock is **not** a runtime toggle. It is decided by the BFF environment at
-startup:
+startup: `MOCK_API=1` serves fixture data, anything else (or unset) talks to
+the real Go API. The default is `0`.
 
-| File | `MOCK_API` | Use |
-|---|---|---|
-| `env/development.env` | `1` | local dev, fixture data |
-| `env/staging.env` | `0` | Go API under test |
-| `env/production.env` | `0` | real Go API |
+| Situation | How |
+|---|---|
+| local dev | `bun run dev` sets `MOCK_API=1` inline |
+| staging | edit `.env`, point `APM_BASE_URL` at the test server |
+| production | `.env` next to the exe with the real `APM_API_KEY` |
 
-`env/staging.env` and `env/production.env` are git-ignored; start from the
-`.example` files next to them. `env/development.env` is committed because it
-contains no secrets.
+One `.env` file only. Variables already set in the shell win over the file, so
+`MOCK_API=1 bun run start` overrides it for a single run.
 
-If `MOCK_API` is unset, it defaults to `0` (real API). The header shows a
-**MOCK** badge only when mock is on, so an operator can never mistake fixture
-data for real patients.
+The header shows a **MOCK** badge only when mock is on, so an operator can
+never mistake fixture data for real patients.
 
-To use the real Go API: copy `env/production.env.example` to
-`env/production.env`, set `APM_API_KEY` and `APM_BASE_URL`, then
-`bun run start`. Without a key, APM API requests are rejected with
-`APM_NOT_CONFIGURED`.
-
-Evaluating without a Go server? Copy `env/development.env` to
-`env/production.env`, or set `MOCK_API=1`, and the app runs on fixture data.
+To use the real Go API: copy `.env.example` to `.env`, set `APM_API_KEY` and
+`APM_BASE_URL`, then `bun run start`. Without a key, APM API requests are
+rejected with `APM_NOT_CONFIGURED`.
 
 All calls use the facade `/api/v1/apm/*` (see
 [`docs/conventions.md`](docs/conventions.md)). Location names are not sent; the
@@ -87,7 +81,6 @@ The queue is stored in SQLite, so refreshing the browser does not clear it.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `NODE_ENV` | `production` | picks `env/<env>.env` |
 | `MOCK_API` | `0` | `1` = fixture data, `0` = real Go API |
 | `PORT` | `3000` | BFF port |
 | `ANTRIAN_DB` | `./data/antrian.db` | SQLite file |
@@ -95,7 +88,7 @@ The queue is stored in SQLite, so refreshing the browser does not clear it.
 | `APM_API_KEY` | *(empty)* | APM API key (required when `MOCK_API=0`) |
 | `AUTH_PASSWORD` | *(empty)* | enable login |
 
-Details: [`env/production.env.example`](env/production.env.example).
+Details: [`.env.example`](.env.example).
 
 ## Theme
 

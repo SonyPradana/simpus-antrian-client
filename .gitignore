@@ -5,11 +5,9 @@ data/
 *.log
 *.err
 
-# Env berisi secret tidak di-commit. Template `.example` tetap di-commit.
+# Env berisi secret tidak di-commit. Template `.env.example` tetap di-commit.
 .env
 .env.local
-env/production.env
-env/staging.env
 
 # Skill & konfigurasi agent lokal - tidak di-commit
 .opencode/

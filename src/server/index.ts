@@ -17,7 +17,6 @@ import { BatchExecutor, JobControl, JobEvents } from "./batch";
 import {
   APM_API_KEY,
   APM_BASE_URL,
-  APP_ENV,
   DB_PATH,
   DIST_DIR,
   MOCK_API,
@@ -473,7 +472,6 @@ if (existsSync(DIST_DIR)) {
 app.listen(PORT);
 
 console.log(`[antrian] BFF listen :${PORT}`);
-console.log(`[antrian] env        ${APP_ENV}`);
 console.log(`[antrian] db         ${DB_PATH}`);
 console.log(
   `[antrian] api        ${

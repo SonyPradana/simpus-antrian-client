@@ -4,11 +4,12 @@
  * Semua nilai yang menentukan perilaku produksi dibaca dari environment,
  * bukan dari SQLite/browser. Tujuannya: operator di puskesmas tidak bisa
  * "tidak sengaja" menyalakan mock saat melayani pasien.
+ *
+ * Hanya satu file: `.env` di direktori kerja. Variabel yang sudah diset di
+ * shell tidak ditimpa, jadi `MOCK_API=1 bun run dev` menang atas isi file.
  */
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-
-export type AppEnv = "development" | "staging" | "production";
 
 function loadEnvFile(file: string): void {
   if (!existsSync(file)) return;
@@ -31,24 +32,13 @@ function loadEnvFile(file: string): void {
   }
 }
 
-/** Muat `env/<NODE_ENV>.env` lebih dulu, lalu `.env` sebagai fallback. */
-function bootstrap(): void {
-  const env = process.env.NODE_ENV ?? "production";
-  const root = process.cwd();
-  loadEnvFile(path.join(root, "env", `${env}.env`));
-  loadEnvFile(path.join(root, ".env"));
-}
-
-bootstrap();
+loadEnvFile(path.join(process.cwd(), ".env"));
 
 function bool(raw: string | undefined, fallback: boolean): boolean {
   if (raw === undefined || raw.trim() === "") return fallback;
   const value = raw.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
-
-export const APP_ENV = (process.env.NODE_ENV ?? "production") as AppEnv;
-export const IS_PRODUCTION = APP_ENV === "production";
 
 /** Mock hanya aktif kalau diminta eksplisit lewat env. Default mati. */
 export const MOCK_API = bool(process.env.MOCK_API, false);

@@ -80,12 +80,11 @@ APM rules that apply (server contract §2.9):
 
 ### Environment
 
-`src/server/config.ts` loads `env/<NODE_ENV>.env` then `.env`, and never
-overrides a variable that is already set. `NODE_ENV` defaults to `production`.
+`src/server/config.ts` reads `.env` from the working directory and never
+overrides a variable that is already set in the shell.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NODE_ENV` | `production` | picks `env/<env>.env` |
 | `MOCK_API` | `0` | `1` = fixture, `0` = real Go API |
 | `APM_BASE_URL` | settings | overrides the Settings base URL |
 | `APM_API_KEY` | *(empty)* | APM facade key, BFF only |
