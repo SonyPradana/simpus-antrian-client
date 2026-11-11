@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SettingsDialog } from "@/web/components/SettingsDialog";
@@ -10,23 +19,79 @@ import { api } from "@/web/lib/api";
 
 type Mode = "manual" | "batch";
 
+const HASH: Record<Mode, string> = { manual: "#/manual", batch: "#/batch" };
+const MODE_LABEL: Record<Mode, string> = { manual: "Manual", batch: "Batch" };
+
+function modeFromHash(): Mode {
+  return window.location.hash === HASH.batch ? "batch" : "manual";
+}
+
 /**
  * Rail: switch mode Manual / Batch.
  * State disimpan di `location.hash` supaya mode bertahan saat refresh
  * (tanpa router library).
+ *
+ * Pindah mode melepas komponen halaman, jadi isian yang belum dikirim ikut
+ * hilang. Perpindahan karena itu dikonfirmasi dulu selama halaman aktif
+ * melaporkan masih ada isian (`onDirtyChange`).
  */
 export function App() {
-  const [mode, setMode] = useState<Mode>(() =>
-    window.location.hash === "#/batch" ? "batch" : "manual",
-  );
+  const [mode, setMode] = useState<Mode>(modeFromHash);
   const [mock, setMock] = useState(false);
+  /** Mode tujuan yang menunggu konfirmasi; `null` = dialog tertutup. */
+  const [pending, setPending] = useState<Mode | null>(null);
+
+  // Status "masih ada isian" hanya dipakai untuk memutuskan, bukan dirender,
+  // jadi cukup ref. Dibaca juga dari listener hashchange yang dipasang sekali.
+  const modeRef = useRef(mode);
+  const dirtyRef = useRef<Record<Mode, boolean>>({ manual: false, batch: false });
+
+  const applyMode = useCallback((next: Mode) => {
+    const current = modeRef.current;
+    if (next === current) return;
+    dirtyRef.current[current] = false;
+    modeRef.current = next;
+    if (window.location.hash !== HASH[next]) window.location.hash = HASH[next];
+    setMode(next);
+  }, []);
+
+  const requestMode = useCallback(
+    (next: Mode) => {
+      const current = modeRef.current;
+      if (next === current) return;
+      if (dirtyRef.current[current]) {
+        setPending(next);
+        return;
+      }
+      applyMode(next);
+    },
+    [applyMode],
+  );
 
   useEffect(() => {
     const onHashChange = () => {
-      setMode(window.location.hash === "#/batch" ? "batch" : "manual");
+      const next = modeFromHash();
+      const current = modeRef.current;
+      if (next === current) return;
+      if (dirtyRef.current[current]) {
+        // Batalkan perpindahan; pindah hanya kalau operator setuju.
+        setPending(next);
+        window.location.hash = HASH[current];
+        return;
+      }
+      modeRef.current = next;
+      setMode(next);
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  const setManualDirty = useCallback((value: boolean) => {
+    dirtyRef.current.manual = value;
+  }, []);
+
+  const setBatchDirty = useCallback((value: boolean) => {
+    dirtyRef.current.batch = value;
   }, []);
 
   // Penanda mode mock: operator tidak boleh salah kira ini data asli.
@@ -39,11 +104,6 @@ export function App() {
         // BFF tidak terjangkau - biarkan penanda mati
       }
     })();
-  }, []);
-
-  const changeMode = useCallback((next: Mode) => {
-    window.location.hash = next === "batch" ? "#/batch" : "#/manual";
-    setMode(next);
   }, []);
 
   return (
@@ -59,7 +119,7 @@ export function App() {
 
           <Tabs
             value={mode}
-            onValueChange={(value) => changeMode(value as Mode)}
+            onValueChange={(value) => requestMode(value as Mode)}
             className="order-3 w-full sm:order-none sm:w-auto"
           >
             <TabsList className="grid w-full grid-cols-2 sm:flex">
@@ -89,8 +149,44 @@ export function App() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6">
-        {mode === "manual" ? <Manual /> : <Batch />}
+        {mode === "manual" ? (
+          <Manual onDirtyChange={setManualDirty} />
+        ) : (
+          <Batch onDirtyChange={setBatchDirty} />
+        )}
       </main>
+
+      <Dialog
+        open={pending !== null}
+        onOpenChange={(open) => {
+          if (!open) setPending(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Isian belum selesai</DialogTitle>
+            <DialogDescription>
+              Masih ada isian di mode {MODE_LABEL[mode]} yang belum dikirim. Pindah ke mode{" "}
+              {pending ? MODE_LABEL[pending] : ""} akan menghapus isian itu.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPending(null)}>
+              Tetap di sini
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const next = pending;
+                setPending(null);
+                if (next) applyMode(next);
+              }}
+            >
+              Buang &amp; pindah
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

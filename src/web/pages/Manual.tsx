@@ -27,6 +27,7 @@ import type {
 import { detectIdentifierType, normalizeIdentifier } from "@/shared/identifier";
 import { actionForLookup, identifierKey, lookupReasonLabel } from "@/shared/mode";
 import type { IdentifierType } from "@/shared/types";
+import { manualHasUnsavedWork } from "@/shared/unsaved";
 import { ClientError, api } from "@/web/lib/api";
 import { IDENTIFIER_LABEL } from "@/web/lib/format";
 
@@ -74,7 +75,7 @@ function StepIndicator({ steps }: { steps: StepProps[] }) {
   );
 }
 
-export function Manual() {
+export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const [step, setStep] = useState(1);
   const [poli, setPoli] = useState<Poli[]>([]);
   const [poliLoading, setPoliLoading] = useState(true);
@@ -145,6 +146,13 @@ export function Manual() {
     () => poscheck.find((item) => item.id === lokasiId),
     [poscheck, lokasiId],
   );
+
+  // Isian dianggap berjalan kalau operator sudah mengetik identitas atau
+  // sudah masuk step 2/3. Step 4 (nomor terbit) bukan isian yang bisa hilang.
+  const dirty = manualHasUnsavedWork(step, identifierValue);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const detectedType = useMemo(
     () => detectIdentifierType(identifierValue),

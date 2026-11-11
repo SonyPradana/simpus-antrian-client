@@ -28,6 +28,7 @@ import { partitionDuplicates } from "@/shared/dedupe";
 import { normalizeIdentifier } from "@/shared/identifier";
 import type { Doctor, Poli, RegistrationOption } from "@/shared/schema";
 import type { IdentifierType, Job, NewItem, QueueItem, Settings } from "@/shared/types";
+import { batchHasUnsavedWork } from "@/shared/unsaved";
 import { ExcelPanel } from "@/web/components/ExcelPanel";
 import { QueueTable } from "@/web/components/QueueTable";
 import { api, subscribeJob } from "@/web/lib/api";
@@ -35,7 +36,7 @@ import { IDENTIFIER_LABEL } from "@/web/lib/format";
 
 const NONE = "__none__";
 
-export function Batch() {
+export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [poli, setPoli] = useState<Poli[]>([]);
   const [poliLoading, setPoliLoading] = useState(true);
@@ -54,7 +55,8 @@ export function Batch() {
   const [poscheckId, setPoscheckId] = useState(NONE);
   const [fallback, setFallback] = useState(false);
   const [identifier, setIdentifier] = useState("");
-
+  /** File Excel sudah dibaca tapi barisnya belum ditambahkan ke tabel. */
+  const [excelPending, setExcelPending] = useState(false);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
   /* ------------------------------ subscribe ---------------------------- */
@@ -166,6 +168,13 @@ export function Batch() {
     () => poscheck.find((item) => item.id === poscheckId),
     [poscheck, poscheckId],
   );
+
+  // Baris yang sudah masuk tabel aman (tersimpan di SQLite), jadi yang
+  // dianggap belum selesai hanya isian yang belum ditekan "Tambah".
+  const dirty = batchHasUnsavedWork(identifier, excelPending);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const addItems = async (newItems: NewItem[]) => {
     // Tolak duplikat (identitas + poli + dokter), baik terhadap isi tabel
@@ -350,7 +359,7 @@ export function Batch() {
           <TabsTrigger value="excel">Import Excel</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="input" className="mt-4 space-y-4">
+        <TabsContent value="input" className="mt-4 space-y-4" forceMount>
           <Card>
             <CardHeader>
               <CardTitle>Tambah antrian</CardTitle>
@@ -476,7 +485,9 @@ export function Batch() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="excel" className="mt-4">
+        {/* Kedua panel tetap ter-mount: pindah tab tidak boleh membuang file
+            Excel yang sudah dibaca. */}
+        <TabsContent value="excel" className="mt-4" forceMount>
           <ExcelPanel
             doctorsByPoli={doctorsByPoli}
             poscheck={poscheck}
@@ -484,6 +495,7 @@ export function Batch() {
             defaultTenaga={settings?.defaultTenaga ?? ""}
             fallback={fallback}
             onAdd={(newItems) => void addItems(newItems)}
+            onPendingChange={setExcelPending}
           />
         </TabsContent>
       </Tabs>

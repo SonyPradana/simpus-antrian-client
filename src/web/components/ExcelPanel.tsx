@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import readXlsxFile from "read-excel-file/browser";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -55,6 +55,8 @@ export interface ExcelPanelProps {
   defaultTenaga: string;
   fallback: boolean;
   onAdd: (items: NewItem[]) => void;
+  /** true selama file sudah dipilih tapi barisnya belum ditambahkan */
+  onPendingChange?: (pending: boolean) => void;
 }
 
 interface Parsed {
@@ -73,12 +75,19 @@ export function ExcelPanel({
   defaultTenaga,
   fallback,
   onAdd,
+  onPendingChange,
 }: ExcelPanelProps) {
   const [parsed, setParsed] = useState<Parsed | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // File yang sudah dipilih tapi barisnya belum ditambahkan: kalau tab
+  // ditinggal, hasil pembacaan ini hilang.
+  useEffect(() => {
+    onPendingChange?.(parsed !== null);
+  }, [parsed, onPendingChange]);
 
   const handleFile = async (file: File) => {
     setError(null);
