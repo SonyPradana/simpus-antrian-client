@@ -37,20 +37,11 @@ export interface Job {
   fallback: boolean;
 }
 
-export interface LocationTemplate {
-  /** poscheck id - dikirim sebagai `poscheck_id` */
-  id: string;
-  /** nama lokasi - label UI; tidak pernah dikirim ke server */
-  nama: string;
-}
-
 export interface Settings {
   /** base URL Go API, mis. http://localhost:8080 */
   apiBaseUrl: string;
-  /** template lokasi, bisa diedit user (client-side) */
-  lokasiTemplates: LocationTemplate[];
+  /** poscheck id default - nama lokasi selalu diambil dari server */
   defaultPoscheckId: string;
-  defaultLokasi: string;
   defaultTenaga: string;
 }
 

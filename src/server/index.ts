@@ -262,11 +262,7 @@ const app = new Elysia()
     const parsed = z
       .object({
         apiBaseUrl: z.string().optional(),
-        lokasiTemplates: z
-          .array(z.object({ id: z.string(), nama: z.string() }))
-          .optional(),
         defaultPoscheckId: z.string().optional(),
-        defaultLokasi: z.string().optional(),
         defaultTenaga: z.string().optional(),
       })
       .safeParse(body);

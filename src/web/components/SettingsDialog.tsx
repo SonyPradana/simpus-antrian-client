@@ -13,14 +13,23 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import type { RegistrationOption } from "@/shared/schema";
+import type { Settings } from "@/shared/types";
 import { api } from "@/web/lib/api";
-import type { LocationTemplate, Settings } from "@/shared/types";
 
 export function SettingsDialog() {
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [petugas, setPetugas] = useState<Array<{ id: string; nama: string }>>([]);
+  const [petugas, setPetugas] = useState<RegistrationOption[]>([]);
+  const [poscheck, setPoscheck] = useState<RegistrationOption[]>([]);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -29,17 +38,11 @@ export function SettingsDialog() {
     try {
       const options = await api.options();
       setPetugas(options.petugas);
-      // Seed template lokasi dari poscheck kalau user belum punya template,
-      // lalu isi default dari `terpilih` (default server).
-      const seeded: LocationTemplate[] =
-        current.lokasiTemplates.length === 0
-          ? options.poscheck.map((item) => ({ id: item.id, nama: item.nama }))
-          : current.lokasiTemplates;
+      setPoscheck(options.poscheck);
+      // Default mengikuti pilihan server selama user belum menyimpan sendiri.
       setSettings({
         ...current,
-        lokasiTemplates: seeded,
         defaultPoscheckId: current.defaultPoscheckId || options.terpilih.poscheck_id,
-        defaultLokasi: current.defaultLokasi || options.terpilih.lokasi,
         defaultTenaga: current.defaultTenaga || options.terpilih.petugas_id,
       });
     } catch {
@@ -66,26 +69,6 @@ export function SettingsDialog() {
     } finally {
       setBusy(false);
     }
-  };
-
-  const addTemplate = () => {
-    patch({
-      lokasiTemplates: [...(settings?.lokasiTemplates ?? []), { id: "", nama: "" }],
-    });
-  };
-
-  const updateTemplate = (index: number, next: Partial<LocationTemplate>) => {
-    const templates = [...(settings?.lokasiTemplates ?? [])];
-    const current = templates[index];
-    if (!current) return;
-    templates[index] = { ...current, ...next };
-    patch({ lokasiTemplates: templates });
-  };
-
-  const removeTemplate = (index: number) => {
-    patch({
-      lokasiTemplates: (settings?.lokasiTemplates ?? []).filter((_, i) => i !== index),
-    });
   };
 
   return (
@@ -140,83 +123,59 @@ export function SettingsDialog() {
             <Separator />
 
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">Template lokasi</h3>
-                <Button variant="outline" size="sm" onClick={addTemplate}>
-                  Tambah
-                </Button>
-              </div>
+              <h3 className="text-sm font-semibold">Default pendaftaran</h3>
               <p className="text-xs text-muted-foreground">
-                <code>id</code> = poscheck id (dikirim sebagai <code>poscheck_id</code>);{" "}
-                <code>nama</code> = label lokasi. Nama lokasi tidak dikirim ke server, server
-                mengambilnya dari tabel <code>poschecks</code>.
+                Daftar lokasi dan petugas dibaca langsung dari server. Client hanya mengirim{" "}
+                <code>poscheck_id</code>; nama lokasi diambil server dari tabel{" "}
+                <code>poschecks</code>.
               </p>
-              <div className="space-y-2">
-                {settings.lokasiTemplates.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Belum ada template lokasi.</p>
-                ) : (
-                  settings.lokasiTemplates.map((template, index) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: template baru punya id kosong sampai diisi
-                    <div key={`${index}-${template.id}`} className="flex items-center gap-2">
-                      <Input
-                        className="w-28"
-                        value={template.id}
-                        placeholder="id"
-                        onChange={(event) =>
-                          updateTemplate(index, { id: event.target.value })
-                        }
-                      />
-                      <Input
-                        value={template.nama}
-                        placeholder="nama lokasi"
-                        onChange={(event) =>
-                          updateTemplate(index, { nama: event.target.value })
-                        }
-                      />
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeTemplate(index)}
-                      >
-                        Hapus
-                      </Button>
-                    </div>
-                  ))
-                )}
-              </div>
-
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="defaultLokasi">Lokasi default</Label>
-                  <Input
-                    id="defaultLokasi"
-                    value={settings.defaultLokasi}
-                    onChange={(event) => patch({ defaultLokasi: event.target.value })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="defaultPoscheckId">Poscheck ID default</Label>
-                  <Input
-                    id="defaultPoscheckId"
+                  <Label htmlFor="defaultPoscheckId">Lokasi default</Label>
+                  <Select
                     value={settings.defaultPoscheckId}
-                    onChange={(event) => patch({ defaultPoscheckId: event.target.value })}
-                  />
+                    onValueChange={(value) => patch({ defaultPoscheckId: value })}
+                  >
+                    <SelectTrigger id="defaultPoscheckId" className="w-full">
+                      <SelectValue placeholder="Pilih lokasi" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {poscheck.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.nama}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {poscheck.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Daftar lokasi belum termuat dari server.
+                    </p>
+                  ) : null}
                 </div>
+
                 <div className="space-y-1.5">
-                  <Label htmlFor="defaultTenaga">Tenaga default</Label>
-                  <Input
-                    id="defaultTenaga"
-                    list="daftar-tenaga"
+                  <Label htmlFor="defaultTenaga">Petugas default</Label>
+                  <Select
                     value={settings.defaultTenaga}
-                    onChange={(event) => patch({ defaultTenaga: event.target.value })}
-                  />
-                  <datalist id="daftar-tenaga">
-                    {petugas.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.nama}
-                      </option>
-                    ))}
-                  </datalist>
+                    onValueChange={(value) => patch({ defaultTenaga: value })}
+                  >
+                    <SelectTrigger id="defaultTenaga" className="w-full">
+                      <SelectValue placeholder="Pilih petugas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {petugas.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.nama}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {petugas.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Daftar petugas belum termuat dari server.
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </section>

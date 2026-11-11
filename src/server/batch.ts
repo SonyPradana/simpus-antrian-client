@@ -175,6 +175,9 @@ export class BatchExecutor {
         status: "sukses",
         queueCode: result.antrian.kode,
         patientName: result.patient?.nama ?? "",
+        // Lokasi dan poscheck mengikuti response server, bukan salinan client.
+        lokasi: result.lokasi ?? item.lokasi,
+        poscheckId: result.poscheck_id ?? item.poscheckId,
         message: "",
         errorCode: "",
       });
@@ -199,6 +202,7 @@ export class BatchExecutor {
         const done = this.store.updateItem(item.id, {
           status: "sukses",
           queueCode: parsed.success ? parsed.data.antrian.kode : "",
+          lokasi: parsed.success ? (parsed.data.lokasi ?? item.lokasi) : item.lokasi,
           message: "pasien sudah terdaftar hari ini",
           errorCode: "",
           sudah_terdaftar: true,
@@ -214,6 +218,7 @@ export class BatchExecutor {
           const done = this.store.updateItem(item.id, {
             status: "sukses",
             queueCode: result.antrian.kode,
+            lokasi: result.lokasi ?? item.lokasi,
             message: "pasien tidak ditemukan -issued sebagai pasien baru",
             errorCode: "",
           });

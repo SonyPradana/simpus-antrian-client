@@ -5,6 +5,7 @@ import {
   findHeaderRow,
   matchDoctor,
   matchHeader,
+  matchPoscheck,
   normalizeHeader,
   normalizePoliId,
   trimLeadingEmptyRows,
@@ -105,6 +106,30 @@ describe("matchDoctor", () => {
   test("null kalau tidak ada yang cocok", () => {
     expect(matchDoctor("dr. Tidak Ada", doctors)).toBeNull();
     expect(matchDoctor("", doctors)).toBeNull();
+  });
+});
+
+describe("matchPoscheck", () => {
+  const poscheck = [
+    { id: "01", nama: "Puskesmas Induk" },
+    { id: "07", nama: "PUSTU BRANJANG" },
+  ];
+
+  test("cocok dengan nama server, case-insensitive", () => {
+    expect(matchPoscheck("pustu branjang", poscheck)).toEqual({
+      id: "07",
+      nama: "PUSTU BRANJANG",
+    });
+  });
+
+  test("menerima poscheck id", () => {
+    expect(matchPoscheck("07", poscheck)?.nama).toBe("PUSTU BRANJANG");
+  });
+
+  test("nama di luar daftar server ditolak, bukan diteruskan apa adanya", () => {
+    // "PKD NGABEN" adalah nama lokal lama yang sudah tidak ada di server.
+    expect(matchPoscheck("PKD NGABEN", poscheck)).toBeNull();
+    expect(matchPoscheck("", poscheck)).toBeNull();
   });
 });
 

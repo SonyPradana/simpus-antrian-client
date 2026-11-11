@@ -125,6 +125,28 @@ describe("BatchExecutor", () => {
     expect(item?.patientName).toBe("Siti Aminah");
   });
 
+  test("nama lokasi diambil dari response server, bukan label yang dipilih di client", async () => {
+    const store = newStore();
+    const job = store.createJob("job-lokasi", "input", false);
+    // client memilih label lama/basi; server yang menentukan nama sebenarnya
+    makeItem(store, job.id, 0, { poscheckId: "07", lokasi: "PKD NGABEN" });
+
+    const api = fakeApi();
+    const original = api.apmQueue;
+    api.apmQueue = async (body) => ({
+      ...(await original(body)),
+      poscheck_id: "07",
+      lokasi: "PUSTU BRANJANG",
+    });
+
+    const executor = new BatchExecutor(store, api, new JobEvents(), options);
+    await executor.run(job.id, new JobControl());
+
+    const [item] = store.listItems(job.id);
+    expect(item?.lokasi).toBe("PUSTU BRANJANG");
+    expect(item?.poscheckId).toBe("07");
+  });
+
   test("pasien tidak ditemukan + fallback aktif -> mode blank", async () => {
     const store = newStore();
     const job = store.createJob("job-2", "input", true);

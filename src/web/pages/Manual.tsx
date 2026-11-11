@@ -16,10 +16,17 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { APMLookupResult, APMQueueBody, APMQueueResult, Doctor, Poli } from "@/shared/schema";
+import type {
+  APMLookupResult,
+  APMQueueBody,
+  APMQueueResult,
+  Doctor,
+  Poli,
+  RegistrationOption,
+} from "@/shared/schema";
 import { detectIdentifierType, normalizeIdentifier } from "@/shared/identifier";
 import { actionForLookup, identifierKey, lookupReasonLabel } from "@/shared/mode";
-import type { IdentifierType, Settings } from "@/shared/types";
+import type { IdentifierType } from "@/shared/types";
 import { ClientError, api } from "@/web/lib/api";
 import { IDENTIFIER_LABEL } from "@/web/lib/format";
 
@@ -69,7 +76,6 @@ function StepIndicator({ steps }: { steps: StepProps[] }) {
 
 export function Manual() {
   const [step, setStep] = useState(1);
-  const [settings, setSettings] = useState<Settings | null>(null);
   const [poli, setPoli] = useState<Poli[]>([]);
   const [poliLoading, setPoliLoading] = useState(true);
 
@@ -79,6 +85,7 @@ export function Manual() {
   const [lokasiId, setLokasiId] = useState(NONE);
   const [tenaga, setTenaga] = useState("");
   const [petugas, setPetugas] = useState<Array<{ id: string; nama: string }>>([]);
+  const [poscheck, setPoscheck] = useState<RegistrationOption[]>([]);
   const [looking, setLooking] = useState(false);
   const [lookupError, setLookupError] = useState<ClientError | null>(null);
   const [patient, setPatient] = useState<APMLookupResult | null>(null);
@@ -101,28 +108,25 @@ export function Manual() {
   const [issuedCode, setIssuedCode] = useState("");
 
   useEffect(() => {
+    // Petugas + poscheck selalu dari server: nama lokasi tidak pernah
+    // diketik manual di client, supaya tidak melenceng dari tabel `poschecks`.
     void (async () => {
       try {
-        const current = await api.getSettings();
-        setSettings(current);
-        setTenaga(current.defaultTenaga);
-        const template = current.lokasiTemplates.find(
-          (item) => item.nama === current.defaultLokasi,
-        );
-        if (template) setLokasiId(template.id);
-        else if (current.lokasiTemplates[0]) setLokasiId(current.lokasiTemplates[0].id);
-      } catch {
-        // pengaturan gagal dimuat - form tetap jalan dengan default
-      }
-    })();
-
-    // daftar petugas untuk dropdown "Tenaga / petugas" (tampilkan nama, simpan ID)
-    void (async () => {
-      try {
-        const options = await api.options();
+        const [options, current] = await Promise.all([
+          api.options(),
+          api.getSettings().catch(() => null),
+        ]);
         setPetugas(options.petugas);
+        setPoscheck(options.poscheck);
+        setTenaga(current?.defaultTenaga || options.terpilih.petugas_id);
+        const preferred =
+          current?.defaultPoscheckId && options.poscheck.some((p) => p.id === current.defaultPoscheckId)
+            ? current.defaultPoscheckId
+            : options.terpilih.poscheck_id || options.poscheck[0]?.id || NONE;
+        setLokasiId(preferred);
       } catch {
         setPetugas([]);
+        setPoscheck([]);
       }
     })();
 
@@ -137,9 +141,9 @@ export function Manual() {
     })();
   }, []);
 
-  const selectedTemplate = useMemo(
-    () => settings?.lokasiTemplates.find((item) => item.id === lokasiId),
-    [settings, lokasiId],
+  const selectedPoscheck = useMemo(
+    () => poscheck.find((item) => item.id === lokasiId),
+    [poscheck, lokasiId],
   );
 
   const detectedType = useMemo(
@@ -261,7 +265,7 @@ export function Manual() {
         mode,
         poli_id: poliId,
         ...(doctorCode !== NONE ? { kode_dokter: doctorCode } : {}),
-        ...(selectedTemplate ? { poscheck_id: selectedTemplate.id } : {}),
+        ...(selectedPoscheck ? { poscheck_id: selectedPoscheck.id } : {}),
       };
 
       if (mode === "registration") {
@@ -384,16 +388,16 @@ export function Manual() {
                     <SelectValue placeholder="Pilih lokasi" />
                   </SelectTrigger>
                   <SelectContent>
-                    {(settings?.lokasiTemplates ?? []).map((template) => (
-                      <SelectItem key={template.id || template.nama} value={template.id}>
-                        {template.nama}
+                    {poscheck.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.nama}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {(settings?.lokasiTemplates ?? []).length === 0 ? (
+                {poscheck.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    Belum ada template lokasi. Atur di Pengaturan.
+                    Daftar lokasi belum termuat dari server.
                   </p>
                 ) : null}
               </div>
@@ -596,7 +600,7 @@ export function Manual() {
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Lokasi</dt>
-                  <dd className="font-medium">{selectedTemplate?.nama ?? "-"}</dd>
+                  <dd className="font-medium">{selectedPoscheck?.nama ?? "-"}</dd>
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Tenaga</dt>
@@ -654,6 +658,10 @@ export function Manual() {
                 <div>
                   <dt className="text-muted-foreground">Sisa kuota</dt>
                   <dd className="font-medium">{result?.antrian.sisa_kuota ?? "-"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Lokasi</dt>
+                  <dd className="font-medium">{result?.lokasi ?? "-"}</dd>
                 </div>
               </dl>
             </div>

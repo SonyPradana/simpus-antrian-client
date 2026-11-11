@@ -26,7 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { partitionDuplicates } from "@/shared/dedupe";
 import { normalizeIdentifier } from "@/shared/identifier";
-import type { Doctor, Poli } from "@/shared/schema";
+import type { Doctor, Poli, RegistrationOption } from "@/shared/schema";
 import type { IdentifierType, Job, NewItem, QueueItem, Settings } from "@/shared/types";
 import { ExcelPanel } from "@/web/components/ExcelPanel";
 import { QueueTable } from "@/web/components/QueueTable";
@@ -44,10 +44,14 @@ export function Batch() {
   const [job, setJob] = useState<Job | null>(null);
   const [items, setItems] = useState<QueueItem[]>([]);
 
+  // poscheck dari server: nama lokasi tidak pernah diketik manual di client
+  const [poscheck, setPoscheck] = useState<RegistrationOption[]>([]);
+
   // panel input
   const [idType, setIdType] = useState<IdentifierType>("nik");
   const [poliId, setPoliId] = useState(NONE);
   const [doctorCode, setDoctorCode] = useState(NONE);
+  const [poscheckId, setPoscheckId] = useState(NONE);
   const [fallback, setFallback] = useState(false);
   const [identifier, setIdentifier] = useState("");
 
@@ -81,9 +85,19 @@ export function Batch() {
   /* ----------------------------- bootstrap ----------------------------- */
 
   useEffect(() => {
+    // Pengaturan + poscheck selalu dari server. Nama lokasi tidak pernah
+    // disimpan di client supaya tidak melenceng dari tabel `poschecks`.
     void (async () => {
       try {
-        setSettings(await api.getSettings());
+        const [current, options] = await Promise.all([api.getSettings(), api.options()]);
+        setSettings(current);
+        setPoscheck(options.poscheck);
+        const preferred =
+          current.defaultPoscheckId &&
+          options.poscheck.some((item) => item.id === current.defaultPoscheckId)
+            ? current.defaultPoscheckId
+            : options.terpilih.poscheck_id || options.poscheck[0]?.id || NONE;
+        setPoscheckId(preferred);
       } catch {
         // biarkan default
       }
@@ -148,9 +162,9 @@ export function Batch() {
 
   const selectedDoctors = doctorsByPoli[poliId] ?? [];
 
-  const template = useMemo(
-    () => settings?.lokasiTemplates.find((item) => item.nama === settings.defaultLokasi),
-    [settings],
+  const selectedPoscheck = useMemo(
+    () => poscheck.find((item) => item.id === poscheckId),
+    [poscheck, poscheckId],
   );
 
   const addItems = async (newItems: NewItem[]) => {
@@ -258,8 +272,8 @@ export function Batch() {
         identifierValue: value,
         poliId,
         doctorCode: doctorCode === NONE ? "" : doctorCode,
-        poscheckId: template?.id ?? settings?.defaultPoscheckId ?? "",
-        lokasi: settings?.defaultLokasi ?? "",
+        poscheckId: selectedPoscheck?.id ?? settings?.defaultPoscheckId ?? "",
+        lokasi: selectedPoscheck?.nama ?? "",
         tenaga: settings?.defaultTenaga ?? "",
         fallback,
       })),
@@ -394,6 +408,27 @@ export function Batch() {
                     </Select>
                   )}
                 </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="batchLokasi">Lokasi pemeriksaan</Label>
+                  <Select value={poscheckId} onValueChange={setPoscheckId}>
+                    <SelectTrigger id="batchLokasi" className="w-full">
+                      <SelectValue placeholder="Pilih lokasi" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {poscheck.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.nama}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {poscheck.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Daftar lokasi belum termuat dari server.
+                    </p>
+                  ) : null}
+                </div>
               </div>
 
               <label className="flex items-start gap-2 text-sm">
@@ -444,9 +479,8 @@ export function Batch() {
         <TabsContent value="excel" className="mt-4">
           <ExcelPanel
             doctorsByPoli={doctorsByPoli}
-            lokasiTemplates={settings?.lokasiTemplates ?? []}
-            defaultLokasi={settings?.defaultLokasi ?? ""}
-            defaultPoscheckId={settings?.defaultPoscheckId ?? ""}
+            poscheck={poscheck}
+            defaultPoscheckId={selectedPoscheck?.id ?? settings?.defaultPoscheckId ?? ""}
             defaultTenaga={settings?.defaultTenaga ?? ""}
             fallback={fallback}
             onAdd={(newItems) => void addItems(newItems)}

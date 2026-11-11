@@ -163,6 +163,27 @@ export function normalizePoliId(value: string): string {
 }
 
 /**
+ * Cocokkan nama lokasi di file Excel dengan daftar `poscheck` dari server.
+ * Server pemilik nama lokasi; file hanya boleh memilih dari daftar itu.
+ */
+export function matchPoscheck(
+  value: string,
+  poscheck: ReadonlyArray<{ id: string; nama: string }>,
+): { id: string; nama: string } | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const lower = trimmed.toLowerCase();
+  const byName = poscheck.find((item) => item.nama.toLowerCase() === lower);
+  if (byName) return byName;
+
+  const byId = poscheck.find((item) => item.id === trimmed);
+  if (byId) return byId;
+
+  return null;
+}
+
+/**
  * Cocokkan nilai kolom dokter dengan daftar dokter.
  * Coba kode MJKN dulu (exact), lalu nama (case-insensitive, substring).
  */

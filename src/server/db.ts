@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { IdentifierType, ItemStatus, JobSource, JobState } from "@/shared/schema";
-import type { Job, LocationTemplate, QueueItem, Settings } from "@/shared/types";
+import type { Job, QueueItem, Settings } from "@/shared/types";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (
@@ -113,9 +113,7 @@ function toItem(row: ItemRow): QueueItem {
 
 export const DEFAULT_SETTINGS: Settings = {
   apiBaseUrl: "http://localhost:8080",
-  lokasiTemplates: [],
   defaultPoscheckId: "",
-  defaultLokasi: "",
   defaultTenaga: "",
 };
 
@@ -144,8 +142,14 @@ export class Store {
     ).get("app");
     if (!row) return { ...DEFAULT_SETTINGS };
     try {
+      // Hanya field yang dikenal: baris lama bisa memuat `lokasiTemplates`
+      // atau `defaultLokasi` yang sekarang tidak dipakai lagi.
       const parsed = JSON.parse(row.value) as Partial<Settings>;
-      return { ...DEFAULT_SETTINGS, ...parsed };
+      return {
+        apiBaseUrl: parsed.apiBaseUrl ?? DEFAULT_SETTINGS.apiBaseUrl,
+        defaultPoscheckId: parsed.defaultPoscheckId ?? DEFAULT_SETTINGS.defaultPoscheckId,
+        defaultTenaga: parsed.defaultTenaga ?? DEFAULT_SETTINGS.defaultTenaga,
+      };
     } catch {
       return { ...DEFAULT_SETTINGS };
     }
@@ -366,4 +370,3 @@ export class Store {
   }
 }
 
-export type { LocationTemplate };

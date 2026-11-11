@@ -20,10 +20,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { buildPreview, matchDoctor, matchHeader, normalizePoliId } from "@/shared/excel";
+import {
+  buildPreview,
+  matchDoctor,
+  matchHeader,
+  matchPoscheck,
+  normalizePoliId,
+} from "@/shared/excel";
 import { normalizeIdentifier } from "@/shared/identifier";
-import type { Doctor } from "@/shared/schema";
-import type { ExcelMapping, LocationTemplate, NewItem } from "@/shared/types";
+import type { Doctor, RegistrationOption } from "@/shared/schema";
+import type { ExcelMapping, NewItem } from "@/shared/types";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_ROWS = 5000;
@@ -43,8 +49,8 @@ const FIELD_LABEL: Record<ColumnField, string> = {
 
 export interface ExcelPanelProps {
   doctorsByPoli: Record<string, Doctor[]>;
-  lokasiTemplates: LocationTemplate[];
-  defaultLokasi: string;
+  /** daftar poscheck dari server - sumber tunggal nama lokasi */
+  poscheck: RegistrationOption[];
   defaultPoscheckId: string;
   defaultTenaga: string;
   fallback: boolean;
@@ -62,8 +68,7 @@ interface Parsed {
 
 export function ExcelPanel({
   doctorsByPoli,
-  lokasiTemplates,
-  defaultLokasi,
+  poscheck,
   defaultPoscheckId,
   defaultTenaga,
   fallback,
@@ -200,16 +205,18 @@ export function ExcelPanel({
       const lokasiRaw = mapping.lokasi === undefined ? "" : (row[mapping.lokasi] ?? "").trim();
       const tenagaRaw = mapping.tenaga === undefined ? "" : (row[mapping.tenaga] ?? "").trim();
 
-      // poscheck id mengikuti template lokasi yang cocok dengan nama di file
-      const template = lokasiTemplates.find((item) => item.nama === lokasiRaw);
+      // Poscheck dicocokkan ke daftar server, bukan salinan lokal. Nama yang
+      // tidak dikenal jatuh ke poscheck default supaya baris tetap sah.
+      const matchedPoscheck =
+        matchPoscheck(lokasiRaw, poscheck) ?? poscheck.find((item) => item.id === defaultPoscheckId);
 
       items.push({
         identifierType,
         identifierValue: identifier.value,
         poliId,
         doctorCode,
-        poscheckId: template?.id ?? defaultPoscheckId,
-        lokasi: lokasiRaw || defaultLokasi,
+        poscheckId: matchedPoscheck?.id ?? defaultPoscheckId,
+        lokasi: matchedPoscheck?.nama ?? "",
         tenaga: tenagaRaw || defaultTenaga,
         fallback,
       });

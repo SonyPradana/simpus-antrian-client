@@ -124,13 +124,18 @@ const OPTIONS: APMOptions = APMOptionsSchema.parse({
     { id: "45", nama: "Andi Prasetyo" },
   ],
   poscheck: [
+    { id: "01", nama: "Puskesmas Induk" },
+    { id: "02", nama: "PKD LEREP" },
+    { id: "03", nama: "PKD NYATNYONO" },
+    { id: "04", nama: "PKD KALISIDI" },
+    { id: "05", nama: "PKD KEJI" },
     { id: "06", nama: "PKD BANDARJO" },
-    { id: "07", nama: "PKD NGABEN" },
+    { id: "07", nama: "PUSTU BRANJANG" },
   ],
   terpilih: {
     petugas_id: "44",
-    poscheck_id: "06",
-    lokasi: "PKD BANDARJO",
+    poscheck_id: "01",
+    lokasi: "Puskesmas Induk",
   },
 });
 
