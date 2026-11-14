@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -23,29 +24,50 @@ import {
 import {
   buildPreview,
   matchDoctor,
-  matchHeader,
   matchPoscheck,
   normalizePoliId,
+  pickIdentifier,
 } from "@/shared/excel";
 import { normalizeIdentifier } from "@/shared/identifier";
 import type { Doctor, RegistrationOption } from "@/shared/schema";
-import type { ExcelMapping, NewItem } from "@/shared/types";
+import type { ExcelMapping, IdentifierType, NewItem } from "@/shared/types";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_ROWS = 5000;
 const NONE = "__none__";
 
-/** Kolom yang bisa dipetakan (bukan `identifierType` - itu turunan, bukan kolom). */
-const COLUMN_FIELDS = ["identifier", "poli", "dokter", "lokasi", "tenaga"] as const;
+/** Kolom non-identitas yang bisa dipetakan manual. */
+const COLUMN_FIELDS = ["poli", "dokter", "lokasi", "tenaga"] as const;
 type ColumnField = (typeof COLUMN_FIELDS)[number];
 
 const FIELD_LABEL: Record<ColumnField, string> = {
-  identifier: "Identitas (NIK/BPJS/No. RM)",
   poli: "Poli (id)",
   dokter: "Dokter (opsional)",
   lokasi: "Lokasi (opsional)",
-  tenaga: "Tenaga (opsional)",
+  tenaga: "Petugas (opsional)",
 };
+
+/** Kolom identitas: boleh lebih dari satu, dipilih per baris. */
+const IDENTIFIER_FIELDS = ["nik", "bpjs", "no_rm"] as const;
+
+const IDENTIFIER_LABEL: Record<IdentifierType, string> = {
+  nik: "NIK",
+  bpjs: "No. BPJS",
+  no_rm: "No. RM",
+};
+
+/** "auto" = pilih kolom identitas yang terisi di tiap baris. */
+type IdentifierChoice = IdentifierType | "auto";
+
+const IDENTIFIER_CHOICE_LABEL: Record<IdentifierChoice, string> = {
+  auto: "Auto",
+  nik: "NIK",
+  bpjs: "No. BPJS",
+  no_rm: "No. RM",
+};
+
+/** Contoh file yang disajikan BFF dari `public/`. */
+const TEMPLATE_URL = "/contoh-import-antrian.xlsx";
 
 export interface ExcelPanelProps {
   doctorsByPoli: Record<string, Doctor[]>;
@@ -81,6 +103,7 @@ export function ExcelPanel({
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [identifierChoice, setIdentifierChoice] = useState<IdentifierChoice>("auto");
   const inputRef = useRef<HTMLInputElement>(null);
 
   // File yang sudah dipilih tapi barisnya belum ditambahkan: kalau tab
@@ -128,9 +151,13 @@ export function ExcelPanel({
         body: preview.body,
         mapping: preview.mapping,
       });
-      if (preview.mapping.identifier === undefined) {
+      const hasIdentifier =
+        preview.mapping.nik !== undefined ||
+        preview.mapping.bpjs !== undefined ||
+        preview.mapping.no_rm !== undefined;
+      if (!hasIdentifier) {
         setError(
-          "Kolom identitas tidak terdeteksi. Pilih kolom NIK/BPJS/No. RM secara manual.",
+          "Kolom identitas tidak terdeteksi. Pastikan ada kolom NIK, No. BPJS, atau No. RM.",
         );
       }
     } catch {
@@ -140,23 +167,17 @@ export function ExcelPanel({
     }
   };
 
-  const setMapping = (field: ColumnField, index: string) => {
+  const setMapping = (field: ColumnField | IdentifierType, index: string) => {
     if (!parsed) return;
     const next: ExcelMapping = { ...parsed.mapping };
     if (index === NONE) {
       delete next[field];
-      if (field === "identifier") delete next.identifierType;
     } else {
-      Object.assign(next, { [field]: Number(index) });
-      if (field === "identifier") {
-        // tentukan lagi jenis identitas dari header kolom yang dipilih
-        const header = parsed.headers[Number(index)] ?? "";
-        const detected = (["nik", "bpjs", "no_rm"] as const).find(
-          (kind) => matchHeader(header, kind) !== null,
-        );
-        next.identifierType = detected ?? "nik";
-      }
+      next[field] = Number(index);
     }
+    // Pesan "kolom identitas tidak terdeteksi" mungkin sudah tidak berlaku
+    // setelah operator memetakan kolomnya sendiri.
+    setError(null);
     setParsed({ ...parsed, mapping: next });
   };
 
@@ -166,11 +187,10 @@ export function ExcelPanel({
 
     // Poli wajib: server menolak poli_id kosong, jadi jangan kirim baris yang
     // pasti gagal.
-    if (mapping.identifier === undefined || mapping.poli === undefined) {
+    if (mapping.poli === undefined) {
       return { items: [], skipped: 0, firstSkip: null };
     }
 
-    const identifierType = mapping.identifierType ?? "nik";
     const items: NewItem[] = [];
     let skipped = 0;
     let firstSkip: string | null = null;
@@ -181,11 +201,13 @@ export function ExcelPanel({
     };
 
     for (const row of parsed.body) {
-      const rawIdentifier = row[mapping.identifier] ?? "";
+      // Satu file boleh memuat kolom NIK, BPJS, dan No. RM sekaligus; tiap
+      // baris memakai kolom pertama yang terisi.
+      const picked = pickIdentifier(row, mapping, identifierChoice);
       // baris kosong bukan kesalahan operator - lewati tanpa dihitung
-      if (rawIdentifier.trim() === "") continue;
+      if (picked === null) continue;
 
-      const identifier = normalizeIdentifier(identifierType, rawIdentifier);
+      const identifier = normalizeIdentifier(picked.type, picked.raw);
       if (!identifier.ok) {
         skip(identifier.message);
         continue;
@@ -220,7 +242,7 @@ export function ExcelPanel({
         matchPoscheck(lokasiRaw, poscheck) ?? poscheck.find((item) => item.id === defaultPoscheckId);
 
       items.push({
-        identifierType,
+        identifierType: picked.type,
         identifierValue: identifier.value,
         poliId,
         doctorCode,
@@ -236,15 +258,31 @@ export function ExcelPanel({
 
   const { items, skipped, firstSkip } = build();
   const poliMissing = parsed !== null && parsed.mapping.poli === undefined;
+  const identifierMissing =
+    parsed !== null &&
+    (identifierChoice === "auto"
+      ? parsed.mapping.nik === undefined &&
+        parsed.mapping.bpjs === undefined &&
+        parsed.mapping.no_rm === undefined
+      : parsed.mapping[identifierChoice] === undefined);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Import dari Excel</CardTitle>
-        <CardDescription>
-          Tarik file .xlsx ke sini. Format header bebas - kolom dideteksi otomatis dan bisa
-          diperbaiki manual.
-        </CardDescription>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1.5">
+            <CardTitle>Import dari Excel</CardTitle>
+            <CardDescription>
+              Tarik file .xlsx ke sini. Header kolom dideteksi otomatis dan bisa diperbaiki
+              manual.
+            </CardDescription>
+          </div>
+          <Button asChild variant="outline" size="sm">
+            <a href={TEMPLATE_URL} download>
+              Unduh contoh .xlsx
+            </a>
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <button
@@ -322,6 +360,57 @@ export function ExcelPanel({
             <Separator />
 
             <div className="space-y-2">
+              <p className="text-sm font-medium">Kolom identitas</p>
+              <p className="text-xs text-muted-foreground">
+                File boleh memuat ketiganya. Mode Auto memakai kolom yang terisi di tiap baris.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {IDENTIFIER_FIELDS.map((field) => (
+                  <div key={field} className="space-y-1.5">
+                    <span className="text-sm">{IDENTIFIER_LABEL[field]}</span>
+                    <Select
+                      value={
+                        parsed.mapping[field] === undefined ? NONE : String(parsed.mapping[field])
+                      }
+                      onValueChange={(value) => setMapping(field, value)}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Tidak ada" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NONE}>Tidak ada</SelectItem>
+                        {parsed.headers.map((header, index) => (
+                          // biome-ignore lint/suspicious/noArrayIndexKey: header Excel bisa kosong/duplikat; index satu-satunya identitas kolom
+                          <SelectItem key={`${index}-${header}`} value={String(index)}>
+                            {header || `Kolom ${index + 1}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+
+              <fieldset className="space-y-2 pt-2">
+                <legend className="mb-2 text-sm font-medium">Jenis identitas</legend>
+                <RadioGroup
+                  value={identifierChoice}
+                  onValueChange={(value) => setIdentifierChoice(value as IdentifierChoice)}
+                  className="flex flex-wrap gap-4"
+                >
+                  {(Object.keys(IDENTIFIER_CHOICE_LABEL) as IdentifierChoice[]).map((choice) => (
+                    <label key={choice} className="flex items-center gap-2 text-sm">
+                      <RadioGroupItem value={choice} id={`excel-id-${choice}`} />
+                      <span>{IDENTIFIER_CHOICE_LABEL[choice]}</span>
+                    </label>
+                  ))}
+                </RadioGroup>
+              </fieldset>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
               <p className="text-sm font-medium">
                 Pratinjau ({parsed.rows.length} dari {parsed.body.length} baris)
               </p>
@@ -361,6 +450,15 @@ export function ExcelPanel({
                 <AlertTitle>Kolom poli belum dipetakan</AlertTitle>
                 <AlertDescription>
                   Server mewajibkan ID poli. Pilih kolom poli di atas sebelum menambahkan.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {identifierMissing ? (
+              <Alert variant="destructive">
+                <AlertTitle>Kolom identitas belum dipetakan</AlertTitle>
+                <AlertDescription>
+                  Pilih minimal satu kolom NIK, No. BPJS, atau No. RM.
                 </AlertDescription>
               </Alert>
             ) : null}

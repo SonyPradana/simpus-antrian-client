@@ -23,9 +23,9 @@ import {
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { partitionDuplicates } from "@/shared/dedupe";
-import { normalizeIdentifier } from "@/shared/identifier";
+import { detectIdentifierType, normalizeIdentifier } from "@/shared/identifier";
 import type { Doctor, Poli, RegistrationOption } from "@/shared/schema";
 import type { IdentifierType, Job, NewItem, QueueItem, Settings } from "@/shared/types";
 import { batchHasUnsavedWork } from "@/shared/unsaved";
@@ -36,6 +36,16 @@ import { IDENTIFIER_LABEL } from "@/web/lib/format";
 
 const NONE = "__none__";
 
+/** "auto" menebak jenis identitas per baris dari bentuk nomornya. */
+type IdentifierChoice = IdentifierType | "auto";
+
+const IDENTIFIER_CHOICE_LABEL: Record<IdentifierChoice, string> = {
+  auto: "Auto",
+  nik: IDENTIFIER_LABEL.nik,
+  bpjs: IDENTIFIER_LABEL.bpjs,
+  no_rm: IDENTIFIER_LABEL.no_rm,
+};
+
 export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [poli, setPoli] = useState<Poli[]>([]);
@@ -44,15 +54,22 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
 
   const [job, setJob] = useState<Job | null>(null);
   const [items, setItems] = useState<QueueItem[]>([]);
+  /** Job lama di SQLite; tidak dimuat otomatis supaya tabel tidak berisi data lama. */
+  const [previousJob, setPreviousJob] = useState<Job | null>(null);
 
-  // poscheck dari server: nama lokasi tidak pernah diketik manual di client
+  // poscheck + petugas dari server: nama lokasi tidak pernah diketik manual
   const [poscheck, setPoscheck] = useState<RegistrationOption[]>([]);
+  const [petugas, setPetugas] = useState<RegistrationOption[]>([]);
+  const [optionsLoading, setOptionsLoading] = useState(true);
 
   // panel input
-  const [idType, setIdType] = useState<IdentifierType>("nik");
+  const [panel, setPanel] = useState<"input" | "excel">("input");
+  const [identifierChoice, setIdentifierChoice] = useState<IdentifierChoice>("auto");
   const [poliId, setPoliId] = useState(NONE);
   const [doctorCode, setDoctorCode] = useState(NONE);
+  const [doctorsLoading, setDoctorsLoading] = useState(false);
   const [poscheckId, setPoscheckId] = useState(NONE);
+  const [tenaga, setTenaga] = useState("");
   const [fallback, setFallback] = useState(false);
   const [identifier, setIdentifier] = useState("");
   /** File Excel sudah dibaca tapi barisnya belum ditambahkan ke tabel. */
@@ -87,13 +104,15 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
   /* ----------------------------- bootstrap ----------------------------- */
 
   useEffect(() => {
-    // Pengaturan + poscheck selalu dari server. Nama lokasi tidak pernah
-    // disimpan di client supaya tidak melenceng dari tabel `poschecks`.
+    // Pengaturan + poscheck + petugas selalu dari server. Nama lokasi tidak
+    // pernah disimpan di client supaya tidak melenceng dari tabel `poschecks`.
     void (async () => {
       try {
         const [current, options] = await Promise.all([api.getSettings(), api.options()]);
         setSettings(current);
         setPoscheck(options.poscheck);
+        setPetugas(options.petugas);
+        setTenaga(current.defaultTenaga || options.terpilih.petugas_id);
         const preferred =
           current.defaultPoscheckId &&
           options.poscheck.some((item) => item.id === current.defaultPoscheckId)
@@ -102,6 +121,8 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
         setPoscheckId(preferred);
       } catch {
         // biarkan default
+      } finally {
+        setOptionsLoading(false);
       }
     })();
 
@@ -116,23 +137,20 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
       }
     })();
 
-    // lanjutkan job terakhir yang ada (biar refresh tidak kehilangan antrian)
+    // Job lama TIDAK dimuat otomatis: membuka menu Batch harus mulai dari
+    // tabel kosong, bukan sisa sesi sebelumnya. Operator memilih sendiri
+    // lewat tombol "Lanjutkan antrian tersimpan" kalau memang mau meneruskan.
     void (async () => {
       try {
         const jobs = await api.listJobs();
-        const last = jobs[0];
-        if (!last) return;
-        const payload = await api.getJob(last.id);
-        setJob(payload.job);
-        setItems(payload.items);
-        subscribe(payload.job.id);
+        setPreviousJob(jobs[0] ?? null);
       } catch {
-        // tidak ada job
+        setPreviousJob(null);
       }
     })();
 
     return () => unsubscribeRef.current?.();
-  }, [subscribe]);
+  }, []);
 
   /* ------------------------------- doctors ----------------------------- */
 
@@ -145,13 +163,37 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
     }
   }, []);
 
+  // Poli berganti -> daftar dokter ikut berganti dan pilihan dokter lama
+  // dibuang. Tanpa reset, kode dokter dari poli sebelumnya ikut terkirim.
   useEffect(() => {
     if (poliId === NONE) {
       setDoctorCode(NONE);
+      setDoctorsLoading(false);
       return;
     }
-    void loadDoctors(poliId);
-  }, [poliId, loadDoctors]);
+    let cancelled = false;
+    setDoctorCode(NONE);
+    setDoctorsLoading(true);
+    void (async () => {
+      try {
+        const list = await api.listDoctors(poliId);
+        if (cancelled) return;
+        setDoctorsByPoli((prev) => ({ ...prev, [poliId]: list.dokter }));
+        // Satu dokter = otomatis; lebih dari satu = operator harus memilih.
+        const auto =
+          list.dipilih?.kode_dokter ??
+          (list.dokter.length === 1 ? list.dokter[0]?.kode_dokter : undefined);
+        setDoctorCode(auto ?? NONE);
+      } catch {
+        if (!cancelled) setDoctorsByPoli((prev) => ({ ...prev, [poliId]: [] }));
+      } finally {
+        if (!cancelled) setDoctorsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [poliId]);
 
   // muat daftar dokter poli saat poli bertukar (dipakai panel Excel)
   useEffect(() => {
@@ -254,20 +296,23 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
     }
 
     // Validasi bentuk identitas sebelum masuk tabel (lihat shared/identifier.ts).
-    const values: string[] = [];
+    // Mode Auto menebak jenis per baris, karena satu batch boleh mencampur
+    // NIK, No. BPJS, dan No. RM.
+    const rows: Array<{ identifierType: IdentifierType; identifierValue: string }> = [];
     let skipped = 0;
     let firstError: string | null = null;
     for (const raw of rawValues) {
-      const result = normalizeIdentifier(idType, raw);
+      const type = identifierChoice === "auto" ? detectIdentifierType(raw) : identifierChoice;
+      const result = normalizeIdentifier(type, raw);
       if (result.ok) {
-        values.push(result.value);
+        rows.push({ identifierType: type, identifierValue: result.value });
       } else {
         skipped += 1;
         firstError ??= result.message;
       }
     }
 
-    if (values.length === 0) {
+    if (rows.length === 0) {
       toast.error(firstError ?? "Identitas tidak valid");
       return;
     }
@@ -276,18 +321,31 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
     }
 
     void addItems(
-      values.map((value) => ({
-        identifierType: idType,
-        identifierValue: value,
+      rows.map((row) => ({
+        identifierType: row.identifierType,
+        identifierValue: row.identifierValue,
         poliId,
         doctorCode: doctorCode === NONE ? "" : doctorCode,
         poscheckId: selectedPoscheck?.id ?? settings?.defaultPoscheckId ?? "",
         lokasi: selectedPoscheck?.nama ?? "",
-        tenaga: settings?.defaultTenaga ?? "",
+        tenaga,
         fallback,
       })),
     );
     setIdentifier("");
+  };
+
+  /** Muat job lama hanya kalau operator memintanya - bukan saat tab dibuka. */
+  const openPrevious = async () => {
+    if (!previousJob) return;
+    try {
+      const payload = await api.getJob(previousJob.id);
+      setJob(payload.job);
+      setItems(payload.items);
+      subscribe(payload.job.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal membuka antrian tersimpan");
+    }
   };
 
   const reorder = async (ids: string[]) => {
@@ -347,158 +405,205 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
     await api.deleteJob(job.id);
     setJob(null);
     setItems([]);
+    // Sisa job lain (kalau ada) masih bisa dibuka lewat tombol di tabel kosong.
+    try {
+      const jobs = await api.listJobs();
+      setPreviousJob(jobs[0] ?? null);
+    } catch {
+      setPreviousJob(null);
+    }
   };
 
   /* -------------------------------- view ------------------------------- */
 
   return (
     <div className="space-y-6">
-      <Tabs defaultValue="input">
+      {/* Hanya trigger tab yang dipakai; panel dirender sendiri di bawah.
+          `TabsContent` + `forceMount` membuat SEMUA panel selalu "present"
+          (Radix mengatur `hidden` dari hasil Presence), sehingga panel Import
+          Excel ikut tampil di tab Input. Dengan div + `hidden`, panel yang
+          tidak aktif tetap ter-mount tapi benar-benar tersembunyi. */}
+      <Tabs value={panel} onValueChange={(value) => setPanel(value as "input" | "excel")}>
         <TabsList>
           <TabsTrigger value="input">Input</TabsTrigger>
           <TabsTrigger value="excel">Import Excel</TabsTrigger>
         </TabsList>
+      </Tabs>
 
-        <TabsContent value="input" className="mt-4 space-y-4" forceMount>
-          <Card>
-            <CardHeader>
-              <CardTitle>Tambah antrian</CardTitle>
-              <CardDescription>
-                Pilih poli, lalu masukkan identitas pasien. Baris masuk ke tabel di bawah dan
-                dikirim saat tombol Kirim ditekan.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="batchPoli">Poli</Label>
-                  {poliLoading ? (
-                    <Skeleton className="h-9 w-full" />
-                  ) : (
-                    <Select value={poliId} onValueChange={setPoliId}>
-                      <SelectTrigger id="batchPoli" className="w-full">
-                        <SelectValue placeholder="Pilih poli" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {poli.map((item) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            {item.nama}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="batchDokter">Dokter</Label>
-                  {poliId === NONE ? (
-                    <p className="text-sm text-muted-foreground">Pilih poli terlebih dahulu.</p>
-                  ) : selectedDoctors.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      Tidak ada dokter terjadwal di poli ini.
-                    </p>
-                  ) : (
-                    <Select
-                      value={doctorCode}
-                      onValueChange={setDoctorCode}
-                      disabled={selectedDoctors.length === 1}
-                    >
-                      <SelectTrigger id="batchDokter" className="w-full">
-                        <SelectValue placeholder="Pilih dokter" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedDoctors.map((doctor) => (
-                          <SelectItem key={doctor.kode_dokter} value={doctor.kode_dokter}>
-                            {doctor.nama_dokter}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="batchLokasi">Lokasi pemeriksaan</Label>
-                  <Select value={poscheckId} onValueChange={setPoscheckId}>
-                    <SelectTrigger id="batchLokasi" className="w-full">
-                      <SelectValue placeholder="Pilih lokasi" />
+      <div className={panel === "input" ? "space-y-4" : "hidden"}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Tambah antrian</CardTitle>
+            <CardDescription>
+              Pilih poli, lalu masukkan identitas pasien. Baris masuk ke tabel di bawah dan
+              dikirim saat tombol Kirim ditekan.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="batchPoli">Poli</Label>
+                {poliLoading ? (
+                  <Skeleton className="h-9 w-full" />
+                ) : (
+                  <Select value={poliId} onValueChange={setPoliId}>
+                    <SelectTrigger id="batchPoli" className="w-full">
+                      <SelectValue placeholder="Pilih poli" />
                     </SelectTrigger>
                     <SelectContent>
-                      {poscheck.map((item) => (
+                      {poli.map((item) => (
                         <SelectItem key={item.id} value={item.id}>
                           {item.nama}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  {poscheck.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">
-                      Daftar lokasi belum termuat dari server.
-                    </p>
-                  ) : null}
-                </div>
+                )}
               </div>
-
-              <label className="flex items-start gap-2 text-sm">
-                <Checkbox
-                  checked={fallback}
-                  onCheckedChange={(checked) => setFallback(checked === true)}
-                />
-                <span>
-                  <span className="font-medium">Fallback pasien baru</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Kalau pasien tidak ditemukan saat dikirim, terbitkan nomor antrian sebagai
-                    pasien baru (tanpa data pasien).
-                  </span>
-                </span>
-              </label>
-
-              <fieldset className="space-y-2">
-                <legend className="mb-2 text-sm font-medium">Jenis identitas</legend>
-                <RadioGroup
-                  value={idType}
-                  onValueChange={(value) => setIdType(value as IdentifierType)}
-                  className="flex flex-wrap gap-4"
-                >
-                  {(Object.keys(IDENTIFIER_LABEL) as IdentifierType[]).map((type) => (
-                    <label key={type} className="flex items-center gap-2 text-sm">
-                      <RadioGroupItem value={type} id={`batch-id-${type}`} />
-                      <span>{IDENTIFIER_LABEL[type]}</span>
-                    </label>
-                  ))}
-                </RadioGroup>
-              </fieldset>
 
               <div className="space-y-1.5">
-                <Label htmlFor="batchIdentifier">{IDENTIFIER_LABEL[idType]} pasien</Label>
-                <Input
-                  id="batchIdentifier"
-                  value={identifier}
-                  onChange={(event) => setIdentifier(event.target.value)}
-                  placeholder={`${IDENTIFIER_LABEL[idType]}, satu per baris (bisa banyak)`}
-                />
+                <Label htmlFor="batchDokter">Dokter</Label>
+                {poliId === NONE ? (
+                  <p className="text-sm text-muted-foreground">Pilih poli terlebih dahulu.</p>
+                ) : doctorsLoading ? (
+                  <Skeleton className="h-9 w-full" />
+                ) : selectedDoctors.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Tidak ada dokter terjadwal di poli ini.
+                  </p>
+                ) : (
+                  <Select
+                    value={doctorCode}
+                    onValueChange={setDoctorCode}
+                    disabled={selectedDoctors.length === 1}
+                  >
+                    <SelectTrigger id="batchDokter" className="w-full">
+                      <SelectValue placeholder="Pilih dokter" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedDoctors.map((doctor) => (
+                        <SelectItem key={doctor.kode_dokter} value={doctor.kode_dokter}>
+                          {doctor.nama_dokter} ({doctor.jam_praktek})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
 
-              <Button onClick={addFromInput}>Tambah ke Antrean</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
+              {/* Lokasi & petugas tampil berpasangan. Kalau salah satu daftar
+                  belum termuat, keduanya disembunyikan dan server memakai
+                  pengaturan default - jangan tampilkan setengah pasang. */}
+              {poscheck.length > 0 && petugas.length > 0 ? (
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="batchLokasi">Lokasi pemeriksaan</Label>
+                    <Select value={poscheckId} onValueChange={setPoscheckId}>
+                      <SelectTrigger id="batchLokasi" className="w-full">
+                        <SelectValue placeholder="Pilih lokasi" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {poscheck.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.nama}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-        {/* Kedua panel tetap ter-mount: pindah tab tidak boleh membuang file
-            Excel yang sudah dibaca. */}
-        <TabsContent value="excel" className="mt-4" forceMount>
-          <ExcelPanel
-            doctorsByPoli={doctorsByPoli}
-            poscheck={poscheck}
-            defaultPoscheckId={selectedPoscheck?.id ?? settings?.defaultPoscheckId ?? ""}
-            defaultTenaga={settings?.defaultTenaga ?? ""}
-            fallback={fallback}
-            onAdd={(newItems) => void addItems(newItems)}
-            onPendingChange={setExcelPending}
-          />
-        </TabsContent>
-      </Tabs>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="batchPetugas">Petugas</Label>
+                    <Select value={tenaga} onValueChange={setTenaga}>
+                      <SelectTrigger id="batchPetugas" className="w-full">
+                        <SelectValue placeholder="Pilih petugas" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {petugas.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.nama}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  {optionsLoading
+                    ? "Memuat daftar lokasi & petugas dari server…"
+                    : "Lokasi & petugas belum termuat dari server. Keduanya memakai pengaturan default."}
+                </p>
+              )}
+            </div>
+
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={fallback}
+                onCheckedChange={(checked) => setFallback(checked === true)}
+              />
+              <span>
+                <span className="font-medium">Fallback pasien baru</span>
+                <span className="block text-xs text-muted-foreground">
+                  Kalau pasien tidak ditemukan saat dikirim, terbitkan nomor antrian sebagai
+                  pasien baru (tanpa data pasien).
+                </span>
+              </span>
+            </label>
+
+            <fieldset className="space-y-2">
+              <legend className="mb-2 text-sm font-medium">Jenis identitas</legend>
+              <RadioGroup
+                value={identifierChoice}
+                onValueChange={(value) => setIdentifierChoice(value as IdentifierChoice)}
+                className="flex flex-wrap gap-4"
+              >
+                {(Object.keys(IDENTIFIER_CHOICE_LABEL) as IdentifierChoice[]).map((choice) => (
+                  <label key={choice} className="flex items-center gap-2 text-sm">
+                    <RadioGroupItem value={choice} id={`batch-id-${choice}`} />
+                    <span>{IDENTIFIER_CHOICE_LABEL[choice]}</span>
+                  </label>
+                ))}
+              </RadioGroup>
+            </fieldset>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="batchIdentifier">
+                {identifierChoice === "auto"
+                  ? "Identitas pasien"
+                  : `${IDENTIFIER_LABEL[identifierChoice]} pasien`}
+              </Label>
+              <Input
+                id="batchIdentifier"
+                value={identifier}
+                onChange={(event) => setIdentifier(event.target.value)}
+                placeholder="Satu nomor per baris (bisa banyak)"
+              />
+              {identifierChoice === "auto" ? (
+                <p className="text-xs text-muted-foreground">
+                  NIK 16 digit, No. BPJS 13 digit, sisanya No. RM. Tiap baris ditebak sendiri.
+                </p>
+              ) : null}
+            </div>
+
+            <Button onClick={addFromInput}>Tambah ke Antrean</Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Panel Excel tetap ter-mount: pindah tab tidak boleh membuang file
+          yang sudah dibaca. */}
+      <div className={panel === "excel" ? "" : "hidden"}>
+        <ExcelPanel
+          doctorsByPoli={doctorsByPoli}
+          poscheck={poscheck}
+          defaultPoscheckId={selectedPoscheck?.id ?? settings?.defaultPoscheckId ?? ""}
+          defaultTenaga={tenaga || settings?.defaultTenaga || ""}
+          fallback={fallback}
+          onAdd={(newItems) => void addItems(newItems)}
+          onPendingChange={setExcelPending}
+        />
+      </div>
 
       <Card>
         <CardHeader>
@@ -516,7 +621,13 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
                   Tambahkan lewat tab Input, atau import dari Excel.
                 </EmptyDescription>
               </EmptyHeader>
-              <EmptyContent />
+              <EmptyContent>
+                {previousJob ? (
+                  <Button variant="outline" size="sm" onClick={() => void openPrevious()}>
+                    Buka antrian tersimpan
+                  </Button>
+                ) : null}
+              </EmptyContent>
             </Empty>
           ) : (
             <>

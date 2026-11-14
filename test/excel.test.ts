@@ -8,6 +8,7 @@ import {
   matchPoscheck,
   normalizeHeader,
   normalizePoliId,
+  pickIdentifier,
   trimLeadingEmptyRows,
 } from "@/shared/excel";
 
@@ -39,22 +40,18 @@ describe("matchHeader", () => {
 });
 
 describe("detectHeaders", () => {
-  test("memilih satu kolom identitas dengan prioritas nik > bpjs > no_rm", () => {
+  test("mendeteksi ketiga kolom identitas sekaligus", () => {
     const mapping = detectHeaders(["No. RM", "No. BPJS", "NIK"]);
-    expect(mapping.identifier).toBe(2);
-    expect(mapping.identifierType).toBe("nik");
+    expect(mapping.nik).toBe(2);
+    expect(mapping.bpjs).toBe(1);
+    expect(mapping.no_rm).toBe(0);
   });
 
-  test("memakai bpjs kalau tidak ada nik", () => {
-    const mapping = detectHeaders(["No. RM", "No. BPJS"]);
-    expect(mapping.identifier).toBe(1);
-    expect(mapping.identifierType).toBe("bpjs");
-  });
-
-  test("memakai no_rm sebagai pilihan terakhir", () => {
-    const mapping = detectHeaders(["Nama", "No. RM"]);
-    expect(mapping.identifier).toBe(1);
-    expect(mapping.identifierType).toBe("no_rm");
+  test("hanya mengisi jenis identitas yang kolomnya ada", () => {
+    const mapping = detectHeaders(["No. BPJS", "Poli"]);
+    expect(mapping.bpjs).toBe(0);
+    expect(mapping.nik).toBeUndefined();
+    expect(mapping.no_rm).toBeUndefined();
   });
 
   test("mendeteksi kolom lain secara terpisah", () => {
@@ -67,8 +64,44 @@ describe("detectHeaders", () => {
 
   test("tidak menemukan kolom identitas kalau tidak ada", () => {
     const mapping = detectHeaders(["Nama", "Alamat"]);
-    expect(mapping.identifier).toBeUndefined();
-    expect(mapping.identifierType).toBeUndefined();
+    expect(mapping.nik).toBeUndefined();
+    expect(mapping.bpjs).toBeUndefined();
+    expect(mapping.no_rm).toBeUndefined();
+  });
+});
+
+describe("pickIdentifier", () => {
+  const mapping = detectHeaders(["NIK", "No. BPJS", "No. RM", "Poli"]);
+  // mapping: nik=0, bpjs=1, no_rm=2, poli=3
+
+  test("auto memakai kolom yang terisi di baris itu", () => {
+    expect(pickIdentifier(["3322184301690004", "", "", "89"], mapping)).toEqual({
+      type: "nik",
+      raw: "3322184301690004",
+    });
+    expect(pickIdentifier(["", "0002612743929", "", "89"], mapping)).toEqual({
+      type: "bpjs",
+      raw: "0002612743929",
+    });
+    expect(pickIdentifier(["", "", "RM000123", "89"], mapping)).toEqual({
+      type: "no_rm",
+      raw: "RM000123",
+    });
+  });
+
+  test("auto memakai prioritas nik > bpjs > no_rm kalau dua kolom terisi", () => {
+    expect(pickIdentifier(["3322184301690004", "0002612743929", "", "89"], mapping)?.type).toBe(
+      "nik",
+    );
+  });
+
+  test("mode tertentu hanya membaca kolom jenis itu", () => {
+    expect(pickIdentifier(["", "0002612743929", "", "89"], mapping, "nik")).toBeNull();
+    expect(pickIdentifier(["", "0002612743929", "", "89"], mapping, "bpjs")?.type).toBe("bpjs");
+  });
+
+  test("null kalau semua kolom identitas kosong", () => {
+    expect(pickIdentifier(["", "", "", "89"], mapping)).toBeNull();
   });
 });
 
@@ -171,7 +204,7 @@ describe("buildPreview", () => {
     ]);
     expect(preview.headers).toEqual(["NIK", "Nama", "Poli"]);
     expect(preview.rows).toEqual([["123", "Budi", "05"]]);
-    expect(preview.mapping.identifier).toBe(0);
-    expect(preview.mapping.identifierType).toBe("nik");
+    expect(preview.mapping.nik).toBe(0);
+    expect(preview.mapping.poli).toBe(2);
   });
 });

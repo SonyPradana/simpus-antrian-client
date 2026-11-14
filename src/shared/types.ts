@@ -65,9 +65,13 @@ export interface NewItem {
 
 /** Pemetaan kolom Excel -> field item. */
 export interface ExcelMapping {
-  identifier?: number;
-  /** jenis identitas yang terdeteksi (nik > bpjs > no_rm) */
-  identifierType?: IdentifierType;
+  /**
+   * Kolom identitas per jenis. Satu baris memakai kolom pertama yang terisi,
+   * jadi satu file boleh memuat NIK, No. BPJS, dan No. RM sekaligus.
+   */
+  nik?: number;
+  bpjs?: number;
+  no_rm?: number;
   poli?: number;
   dokter?: number;
   lokasi?: number;

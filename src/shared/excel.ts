@@ -8,6 +8,7 @@
  * server, dan bisa diuji terpisah.
  */
 import type { ExcelMapping, ExcelPreview } from "./types";
+import type { IdentifierType } from "./schema";
 
 /** Normalisasi header: lowercase, tanpa tanda baca, spasi excess -> "_". */
 export function normalizeHeader(value: string): string {
@@ -76,49 +77,66 @@ export type ExcelField = "nik" | "bpjs" | "no_rm" | "poli" | "dokter" | "lokasi"
 
 const FIELDS: ExcelField[] = ["nik", "bpjs", "no_rm", "poli", "dokter", "lokasi", "tenaga"];
 
+/** Urutan prioritas saat satu baris punya lebih dari satu kolom identitas terisi. */
+export const IDENTIFIER_ORDER = ["nik", "bpjs", "no_rm"] as const;
+
+/** Kolom dengan skor tertinggi untuk satu field; -1 kalau tidak ada. */
+function bestColumn(headers: string[], field: ExcelField): number {
+  let bestIndex = -1;
+  let bestScore = 0;
+  headers.forEach((header, index) => {
+    const score = matchHeader(header, field) ?? 0;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
 /**
  * Auto-detect pemetaan kolom dari baris header.
- * - identifier: nik > bpjs > no_rm (hanya satu kolom yang dipakai)
- * - kolom lain: ambil yang skornya paling tinggi
+ *
+ * Kolom identitas dideteksi per jenis (nik/bpjs/no_rm), bukan dipilih satu:
+ * file puskesmas sering memuat ketiganya, dan tiap baris hanya salah satu
+ * yang terisi. `pickIdentifier` yang memutuskan per baris.
  */
 export function detectHeaders(headers: string[]): ExcelMapping {
-  const scores: Record<string, number[]> = {};
-  for (const field of FIELDS) scores[field] = headers.map((h) => matchHeader(h, field) ?? -1);
-
   const mapping: ExcelMapping = {};
-
-  // identifier: prioritas nik > bpjs > no_rm
-  for (const field of ["nik", "bpjs", "no_rm"] as const) {
-    const list = scores[field] ?? [];
-    let bestIndex = -1;
-    let bestScore = 0;
-    list.forEach((score, index) => {
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = index;
-      }
-    });
-    if (bestIndex >= 0) {
-      mapping.identifier = bestIndex;
-      mapping.identifierType = field;
-      break;
-    }
+  for (const field of FIELDS) {
+    const index = bestColumn(headers, field);
+    if (index >= 0) mapping[field] = index;
   }
-
-  for (const field of ["poli", "dokter", "lokasi", "tenaga"] as const) {
-    const list = scores[field] ?? [];
-    let bestIndex = -1;
-    let bestScore = 0;
-    list.forEach((score, index) => {
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = index;
-      }
-    });
-    if (bestIndex >= 0) mapping[field] = bestIndex;
-  }
-
   return mapping;
+}
+
+export interface PickedIdentifier {
+  type: IdentifierType;
+  raw: string;
+}
+
+/**
+ * Ambil identitas satu baris.
+ *
+ * `preferred` = "auto" -> pakai kolom pertama yang terisi (nik > bpjs > no_rm).
+ * `preferred` = jenis tertentu -> hanya kolom jenis itu.
+ * Returns null kalau tidak ada kolom yang terisi.
+ */
+export function pickIdentifier(
+  row: string[],
+  mapping: ExcelMapping,
+  preferred: IdentifierType | "auto" = "auto",
+): PickedIdentifier | null {
+  const kinds: readonly IdentifierType[] =
+    preferred === "auto" ? IDENTIFIER_ORDER : [preferred];
+
+  for (const type of kinds) {
+    const index = mapping[type];
+    if (index === undefined) continue;
+    const raw = (row[index] ?? "").trim();
+    if (raw !== "") return { type, raw };
+  }
+  return null;
 }
 
 /** Buang baris kosong di awal (banyak file excel punya baris judul di atas). */
