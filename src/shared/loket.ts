@@ -2,15 +2,26 @@
  * Pure logic for external loket actions (Cetak Antrian and Hadir).
  *
  * Shared by the BFF and the browser. There is no I/O here so the rules can be
- * tested without a network. Endpoint facts are recorded in
- * PROMPT_CETAK_ANTRIAN.md.
+ * tested without a network. The endpoint facts are verified externally.
  */
 
 /** `unit` must be exactly this; other values are accepted but do not print. */
 export const LOKET_UNIT = "Pendaftaran";
 
+/** Default unit id; also used as the key for the session data unit mapping. */
+export const LOKET_UNIT_ID = "99";
+
+/** Session hydration uses a data unit derived from the configured unit id. */
+export function dataUnitFor(unitId: string): string {
+  const mapping: Record<string, string> = {
+    "99": "Pendaftaran_1",
+    "96": "Pendaftaran_2",
+    "88": "Pendaftaran_3",
+  };
+  return mapping[unitId.trim()] ?? "Pendaftaran_1";
+}
+
 export interface LoketPayloadConfig {
-  unit: string;
   unitId: string;
 }
 
@@ -19,17 +30,14 @@ export function buildLoketPayload(
   input: { kode: string; poli?: string },
   cfg: LoketPayloadConfig,
 ): URLSearchParams {
-  if (cfg.unit !== LOKET_UNIT) {
-    throw new Error(`PRINT_UNIT must be "${LOKET_UNIT}", got "${cfg.unit}"`);
-  }
   const kode = (input.kode ?? "").trim();
   if (kode === "") throw new Error("queue code is required");
 
   const params = new URLSearchParams();
   params.set("kode", kode);
-  params.set("unit", cfg.unit);
+  params.set("unit", LOKET_UNIT);
   params.set("poli", input.poli ?? "");
-  params.set("unitId", cfg.unitId || "99");
+  params.set("unitId", cfg.unitId || LOKET_UNIT_ID);
   return params;
 }
 

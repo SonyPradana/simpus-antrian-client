@@ -87,22 +87,19 @@ The queue is stored in SQLite, so refreshing the browser does not clear it.
 | `APM_BASE_URL` | *(settings)* | Go API base URL; overrides Settings |
 | `APM_API_KEY` | *(empty)* | APM API key (required when `MOCK_API=0`) |
 | `AUTH_PASSWORD` | *(empty)* | enable login |
-| `PRINT_API_BASE_URL` | *(empty)* | external loket base URL; empty disables print and Hadir |
-| `PRINT_ENABLED` | from URL | explicit kill switch for print |
-| `PRINT_UNIT` | `Pendaftaran` | must be exact or the external print command is ignored |
-| `PRINT_UNIT_ID` | `99` | unit id sent to the external endpoint |
+| `PRINT_API_BASE_URL` | *(empty)* | external loket base URL; empty disables both actions |
+| `PRINT_ENABLED` | from URL | explicit kill switch for both loket actions |
+| `PRINT_UNIT_ID` | `99` | unit id sent to the endpoint; selects the session data unit |
 | `PRINT_TIMEOUT_MS` | `5000` | timeout per external request |
-| `PRINT_ALLOW_MOCK` | `0` | allow external actions with mock queue codes |
-| `PRINT_ON_BATCH` | `0` | allow batch print; Hadir is never batched |
-| `HADIR_ENABLED` | from print | explicit kill switch for Hadir |
-| `HADIR_ALLOW_MOCK` | from print | allow Hadir with mock queue codes |
-| `LOKET_DATAUNIT` | `Pendaftaran_1` | session hydration path for unit 99 |
 
-External loket actions stay off unless `PRINT_API_BASE_URL` is set and
-`MOCK_API=0`. Both Cetak Antrian and Hadir & Sinkronisasi are manual buttons in
+`unit` is hardcoded to `Pendaftaran` and the Hadir session data unit is derived
+from `PRINT_UNIT_ID`. Both loket actions share one gate:
+`PRINT_API_BASE_URL !== "" && PRINT_ENABLED && !MOCK_API`. Mock mode always
+disables them. Both Cetak Antrian and Hadir & Sinkronisasi are manual buttons in
 Step 4; `Simpan` only registers the patient. An HTTP 200 only means the command
 was accepted — it is not proof that paper was printed or BPJS was updated.
-Batch print is opt-in per row (checkbox or Excel `Cetak` column).
+Batch print is opt-in per row (checkbox or Excel `Cetak` column); Hadir is
+never batched.
 
 Details: [`.env.example`](.env.example).
 

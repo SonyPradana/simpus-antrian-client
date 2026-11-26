@@ -5,13 +5,11 @@ import {
   createLoketApi,
   LoketApiError,
 } from "@/server/loket";
-import { buildLoketPayload, validateHadir } from "@/shared/loket";
+import { buildLoketPayload, dataUnitFor, validateHadir } from "@/shared/loket";
 
 const config = {
   baseUrl: "http://example.test/antrian/index.php/Antrian",
-  unit: "Pendaftaran",
   unitId: "99",
-  dataUnit: "Pendaftaran_1",
   timeoutMs: 1000,
 };
 
@@ -73,7 +71,7 @@ describe("buildLoketPayload", () => {
   test("sends exactly the four verified fields with encoded spaces", () => {
     const payload = buildLoketPayload(
       { kode: " B001 ", poli: "Lintas Klaster Gigi" },
-      { unit: "Pendaftaran", unitId: "99" },
+      { unitId: "99" },
     );
     expect([...payload.keys()]).toEqual(["kode", "unit", "poli", "unitId"]);
     expect(payload.toString()).toBe(
@@ -81,15 +79,21 @@ describe("buildLoketPayload", () => {
     );
   });
 
-  test("rejects an empty queue code and a wrong unit", () => {
-    const cfg = { unit: "Pendaftaran", unitId: "99" };
-    expect(() => buildLoketPayload({ kode: " " }, cfg)).toThrow();
-    expect(() =>
-      buildLoketPayload(
-        { kode: "B001" },
-        { unit: "Pendaftaran_1", unitId: "99" },
-      ),
-    ).toThrow();
+  test("rejects an empty queue code but always uses the hardcoded unit", () => {
+    expect(() => buildLoketPayload({ kode: " " }, { unitId: "99" })).toThrow();
+    expect(buildLoketPayload({ kode: "B001" }, { unitId: "96" }).get("unit")).toBe(
+      "Pendaftaran",
+    );
+  });
+});
+
+describe("dataUnitFor", () => {
+  test("maps known unit ids and falls back to the default", () => {
+    expect(dataUnitFor("99")).toBe("Pendaftaran_1");
+    expect(dataUnitFor("96")).toBe("Pendaftaran_2");
+    expect(dataUnitFor("88")).toBe("Pendaftaran_3");
+    expect(dataUnitFor(" 99 ")).toBe("Pendaftaran_1");
+    expect(dataUnitFor("42")).toBe("Pendaftaran_1");
   });
 });
 

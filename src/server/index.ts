@@ -19,17 +19,11 @@ import {
   APM_BASE_URL,
   DB_PATH,
   DIST_DIR,
-  HADIR_ALLOW_MOCK,
-  HADIR_ENABLED,
-  LOKET_DATAUNIT,
   MOCK_API,
   PORT,
-  PRINT_ALLOW_MOCK,
   PRINT_API_BASE_URL,
   PRINT_ENABLED,
-  PRINT_ON_BATCH,
   PRINT_TIMEOUT_MS,
-  PRINT_UNIT,
   PRINT_UNIT_ID,
 } from "./config";
 import { Store } from "./db";
@@ -54,16 +48,15 @@ const sessions: SessionStore = createSessionStore(store);
 
 /* ----------------------- external loket actions ----------------------- */
 
-/** Mock queue codes do not exist in the external database, so default off. */
-const printEnabled = PRINT_ENABLED && (!MOCK_API || PRINT_ALLOW_MOCK);
-const hadirEnabled = HADIR_ENABLED && (!MOCK_API || HADIR_ALLOW_MOCK);
+/** One gate for both loket actions; mock codes never reach the external app. */
+const loketAktif = PRINT_API_BASE_URL !== "" && PRINT_ENABLED && !MOCK_API;
+const printEnabled = loketAktif;
+const hadirEnabled = loketAktif;
 
-const loketApi: LoketApi = printEnabled || hadirEnabled
+const loketApi: LoketApi = loketAktif
   ? createLoketApi({
       baseUrl: PRINT_API_BASE_URL,
-      unit: PRINT_UNIT,
       unitId: PRINT_UNIT_ID,
-      dataUnit: LOKET_DATAUNIT,
       timeoutMs: PRINT_TIMEOUT_MS,
     })
   : createDisabledLoketApi();
@@ -457,8 +450,8 @@ const app = new Elysia()
     const executor = new BatchExecutor(store, getApi(), events, {
       // Registrasi selalu verifikasi BPJS supaya "Nama Faskes" terisi.
       pcare: true,
-      // Hadir is never batched; print is per-row opt-in behind a global kill switch.
-      print: PRINT_ON_BATCH && printEnabled ? (input) => loketApi.print(input) : undefined,
+      // Hadir is never batched; print is opt-in per row.
+      print: loketAktif ? (input) => loketApi.print(input) : undefined,
     });
 
     const promise = executor.run(params.id, control).finally(() => {

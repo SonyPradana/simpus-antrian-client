@@ -86,19 +86,20 @@ APM rules that apply (server contract §2.9):
 the BFF. `src/shared/loket.ts` holds the pure payload builder and Hadir
 validator shared with the browser.
 
-- Print uses exactly four form fields: `kode`, `unit`, `poli`, `unitId`.
-  `PRINT_UNIT` must be `Pendaftaran`; any other value returns HTTP 200 but does
-  not print. HTTP 200 only means the command was accepted.
+- Print uses exactly four form fields: `kode`, `unit`, `poli`, `unitId`. `unit`
+  is hardcoded to `Pendaftaran`; other values return HTTP 200 but do not print.
+  HTTP 200 only means the command was accepted.
 - Both print and Hadir are manual only, from the Step 4 buttons. `Simpan`
   (`POST /api/queue`) never triggers either action. Neither action claims that
   paper was printed or that BPJS was updated.
 - Hadir needs `ci_session` hydration, follows the `303` redirect, and treats
-  success text in the body as authoritative. HTTP 500 can still contain a
-  success message. Retry only once, and only for a lost session — never after
-  success or a 500 response.
-- Batch jobs may print per row when `PRINT_ON_BATCH=1` and the row is opted in.
-  Hadir is never part of a batch. A print failure keeps the registration status
-  successful and appends a note to `message`.
+  success text in the body as authoritative. The hydration data unit is derived
+  from `PRINT_UNIT_ID` (`99→Pendaftaran_1`, `96→Pendaftaran_2`,
+  `88→Pendaftaran_3`). HTTP 500 can still contain a success message. Retry only
+  once, and only for a lost session — never after success or a 500 response.
+- Batch jobs may print per row when the row is opted in and the shared loket
+  gate is active. Hadir is never part of a batch. A print failure keeps the
+  registration status successful and appends a note to `message`.
 
 ### Environment
 
@@ -112,19 +113,13 @@ overrides a variable that is already set in the shell.
 | `APM_API_KEY` | *(empty)* | APM facade key, BFF only |
 | `AUTH_PASSWORD` | *(empty)* | enables login |
 | `PRINT_API_BASE_URL` | *(empty)* | external loket base URL; empty disables both actions |
-| `PRINT_ENABLED` | from URL | explicit print kill switch |
-| `PRINT_UNIT` | `Pendaftaran` | exact value required by the external print command |
-| `PRINT_UNIT_ID` | `99` | unit id sent to the external endpoint |
+| `PRINT_ENABLED` | from URL | explicit kill switch for both loket actions |
+| `PRINT_UNIT_ID` | `99` | unit id sent to the endpoint; selects the session data unit |
 | `PRINT_TIMEOUT_MS` | `5000` | timeout per external request |
-| `PRINT_ALLOW_MOCK` | `0` | allow external actions with mock queue codes |
-| `PRINT_ON_BATCH` | `0` | global gate for per-row batch print |
-| `HADIR_ENABLED` | from `PRINT_ENABLED` | explicit Hadir kill switch |
-| `HADIR_ALLOW_MOCK` | from `PRINT_ALLOW_MOCK` | allow Hadir with mock queue codes |
-| `LOKET_DATAUNIT` | `Pendaftaran_1` | hydration path used with unit 99 |
 
+The effective gate is `PRINT_API_BASE_URL !== "" && PRINT_ENABLED && !MOCK_API`.
 Mock is **not** part of `Settings` and is not editable from the UI; it is
-decided at process start. External actions are additionally disabled under
-`MOCK_API=1` unless the matching `*_ALLOW_MOCK` flag is set.
+decided at process start. Mock mode always disables external loket actions.
 
 ## 4. Adding a shadcn component
 

@@ -63,17 +63,8 @@ export const PRINT_API_BASE_URL = (process.env.PRINT_API_BASE_URL ?? "")
   .trim()
   .replace(/\/+$/, "");
 
-/** Must be exactly `Pendaftaran` for the print command to run. */
-export const PRINT_UNIT = (process.env.PRINT_UNIT ?? "Pendaftaran").trim();
+/** Unit id sent to the external endpoint; also selects the session data unit. */
 export const PRINT_UNIT_ID = (process.env.PRINT_UNIT_ID ?? "99").trim();
 export const PRINT_TIMEOUT_MS = Number(process.env.PRINT_TIMEOUT_MS ?? 5000);
 
 export const PRINT_ENABLED = bool(process.env.PRINT_ENABLED, PRINT_API_BASE_URL !== "");
-export const PRINT_ALLOW_MOCK = bool(process.env.PRINT_ALLOW_MOCK, false);
-export const PRINT_ON_BATCH = bool(process.env.PRINT_ON_BATCH, false);
-
-export const HADIR_ENABLED = bool(process.env.HADIR_ENABLED, PRINT_ENABLED);
-export const HADIR_ALLOW_MOCK = bool(process.env.HADIR_ALLOW_MOCK, PRINT_ALLOW_MOCK);
-
-/** Used for session hydration: 99 -> Pendaftaran_1, 96 -> Pendaftaran_2. */
-export const LOKET_DATAUNIT = (process.env.LOKET_DATAUNIT ?? "Pendaftaran_1").trim();

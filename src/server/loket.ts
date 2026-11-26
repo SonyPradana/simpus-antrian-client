@@ -2,14 +2,14 @@
  * HTTP client for two actions in the external queue application:
  * CetakAntrian and Hadir. All requests come from the BFF, never the browser.
  *
- * Verified facts (see PROMPT_CETAK_ANTRIAN.md):
+ * Verified facts:
  * - print: static 200, no session required, `unit` must be exactly
  *   `Pendaftaran`.
  * - hadir: 303 -> /bpjs/process_bpjs_data/..., requires `ci_session`, and
  *   success must be read from the body. HTTP 500 can contain both a success
  *   message and a database error.
  */
-import { buildLoketPayload, validateHadir } from "@/shared/loket";
+import { buildLoketPayload, dataUnitFor, validateHadir } from "@/shared/loket";
 import type { HadirRequest, PrintRequest } from "@/shared/schema";
 
 export type LoketWarning = "log_lokal_gagal" | "pcare_sudah_terdaftar";
@@ -34,9 +34,7 @@ export class LoketApiError extends Error {
 
 export interface LoketConfig {
   baseUrl: string;
-  unit: string;
   unitId: string;
-  dataUnit: string;
   timeoutMs: number;
 }
 
@@ -131,7 +129,7 @@ export function createLoketApi(cfg: LoketConfig, fetchImpl: FetchLike = fetch): 
     );
     cookie = extractCookie(first);
 
-    const dataUrl = `${root}index.php/Antrian/DataFingerUnit/${encodeURIComponent(cfg.unitId)}/${encodeURIComponent(cfg.dataUnit)}`;
+    const dataUrl = `${root}index.php/Antrian/DataFingerUnit/${encodeURIComponent(cfg.unitId)}/${encodeURIComponent(dataUnitFor(cfg.unitId))}`;
     const second = await fetchWithTimeout(
       dataUrl,
       { redirect: "follow", headers: cookie ? { Cookie: cookie } : {} },
@@ -152,7 +150,7 @@ export function createLoketApi(cfg: LoketConfig, fetchImpl: FetchLike = fetch): 
 
       let body: string;
       try {
-        body = buildLoketPayload(input, { unit: cfg.unit, unitId: cfg.unitId }).toString();
+        body = buildLoketPayload(input, { unitId: cfg.unitId }).toString();
       } catch (error) {
         throw new LoketApiError(
           "PRINT_CONFIG",
@@ -189,7 +187,7 @@ export function createLoketApi(cfg: LoketConfig, fetchImpl: FetchLike = fetch): 
 
       let body: string;
       try {
-        body = buildLoketPayload(input, { unit: cfg.unit, unitId: cfg.unitId }).toString();
+        body = buildLoketPayload(input, { unitId: cfg.unitId }).toString();
       } catch (error) {
         throw new LoketApiError(
           "HADIR_CONFIG",
