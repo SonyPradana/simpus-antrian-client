@@ -3,6 +3,7 @@ import {
   buildPreview,
   detectHeaders,
   findHeaderRow,
+  isCetakCell,
   matchDoctor,
   matchHeader,
   matchPoscheck,
@@ -37,6 +38,12 @@ describe("matchHeader", () => {
     expect(matchHeader("No RM", "no_rm")).toBe(100);
     expect(matchHeader("No. Rekam Medis", "no_rm")).toBe(95);
   });
+
+  test("recognizes the Cetak opt-in column", () => {
+    expect(matchHeader("Cetak", "cetak")).toBe(100);
+    expect(matchHeader("CETAK ANTRIAN", "cetak")).toBe(100);
+    expect(matchHeader("Print", "cetak")).toBe(100);
+  });
 });
 
 describe("detectHeaders", () => {
@@ -67,6 +74,24 @@ describe("detectHeaders", () => {
     expect(mapping.nik).toBeUndefined();
     expect(mapping.bpjs).toBeUndefined();
     expect(mapping.no_rm).toBeUndefined();
+  });
+
+  test("detects Cetak alongside identity columns", () => {
+    const mapping = detectHeaders(["NIK", "Poli", "Cetak"]);
+    expect(mapping.nik).toBe(0);
+    expect(mapping.poli).toBe(1);
+    expect(mapping.cetak).toBe(2);
+  });
+});
+
+describe("isCetakCell", () => {
+  test("accepts common truthy spellings and rejects everything else", () => {
+    for (const value of ["true", "TRUE", "1", " ya ", "Y"]) {
+      expect(isCetakCell(value)).toBe(true);
+    }
+    for (const value of ["", "0", "false", "tidak", "n"]) {
+      expect(isCetakCell(value)).toBe(false);
+    }
   });
 });
 

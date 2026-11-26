@@ -22,7 +22,7 @@ The Go server is optional — the app runs fully against mock data:
 
 ```powershell
 bun install
-bun run dev      # http://localhost:5173  (hot reload, BFF :3000, mock)
+bun run dev      # http://localhost:5173  (hot reload, BFF :3000, uses .env)
 ```
 
 To use the production build:
@@ -40,7 +40,7 @@ the real Go API. The default is `0`.
 
 | Situation | How |
 |---|---|
-| local dev | `bun run dev` sets `MOCK_API=1` inline |
+| local dev | `bun run dev` uses `.env`; set `MOCK_API=1` explicitly for fixtures |
 | staging | edit `.env`, point `APM_BASE_URL` at the test server |
 | production | `.env` next to the exe with the real `APM_API_KEY` |
 
@@ -87,6 +87,22 @@ The queue is stored in SQLite, so refreshing the browser does not clear it.
 | `APM_BASE_URL` | *(settings)* | Go API base URL; overrides Settings |
 | `APM_API_KEY` | *(empty)* | APM API key (required when `MOCK_API=0`) |
 | `AUTH_PASSWORD` | *(empty)* | enable login |
+| `PRINT_API_BASE_URL` | *(empty)* | external loket base URL; empty disables print and Hadir |
+| `PRINT_ENABLED` | from URL | explicit kill switch for print |
+| `PRINT_UNIT` | `Pendaftaran` | must be exact or the external print command is ignored |
+| `PRINT_UNIT_ID` | `99` | unit id sent to the external endpoint |
+| `PRINT_TIMEOUT_MS` | `5000` | timeout per external request |
+| `PRINT_ALLOW_MOCK` | `0` | allow external actions with mock queue codes |
+| `PRINT_ON_BATCH` | `0` | allow batch print; Hadir is never batched |
+| `HADIR_ENABLED` | from print | explicit kill switch for Hadir |
+| `HADIR_ALLOW_MOCK` | from print | allow Hadir with mock queue codes |
+| `LOKET_DATAUNIT` | `Pendaftaran_1` | session hydration path for unit 99 |
+
+External loket actions stay off unless `PRINT_API_BASE_URL` is set and
+`MOCK_API=0`. Both Cetak Antrian and Hadir & Sinkronisasi are manual buttons in
+Step 4; `Simpan` only registers the patient. An HTTP 200 only means the command
+was accepted — it is not proof that paper was printed or BPJS was updated.
+Batch print is opt-in per row (checkbox or Excel `Cetak` column).
 
 Details: [`.env.example`](.env.example).
 

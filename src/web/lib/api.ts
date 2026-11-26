@@ -50,9 +50,23 @@ export interface JobPayload {
   items: QueueItem[];
 }
 
+export interface HealthPayload {
+  status: string;
+  mock: boolean;
+  apmConfigured: boolean;
+  printEnabled: boolean;
+  hadirEnabled: boolean;
+}
+
+export interface LoketResult {
+  ok: boolean;
+  skipped?: boolean;
+  state?: "terkirim";
+  warning?: "log_lokal_gagal" | "pcare_sudah_terdaftar";
+}
+
 export const api = {
-  health: () =>
-    request<{ status: string; mock: boolean; apmConfigured: boolean }>("/api/health"),
+  health: () => request<HealthPayload>("/api/health"),
 
   listPoli: () => request<Poli[]>("/api/poli"),
 
@@ -88,6 +102,7 @@ export const api = {
       lokasi?: string;
       tenaga?: string;
       fallback?: boolean;
+      cetak?: boolean;
     }>;
   }) =>
     request<JobPayload>("/api/jobs", {
@@ -108,6 +123,7 @@ export const api = {
       lokasi?: string;
       tenaga?: string;
       fallback?: boolean;
+      cetak?: boolean;
     }>,
   ) =>
     request<QueueItem[]>(`/api/jobs/${id}/items`, {
@@ -136,6 +152,20 @@ export const api = {
     request<APMQueueResult>("/api/queue", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+
+  // Loket actions always go through the BFF; the browser never calls the
+  // external host directly.
+  print: (input: { kode: string; poli: string }) =>
+    request<LoketResult>("/api/print", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  hadir: (input: { kode: string; poli: string; noKartu: string; namaProvider: string }) =>
+    request<LoketResult>("/api/hadir", {
+      method: "POST",
+      body: JSON.stringify(input),
     }),
 };
 

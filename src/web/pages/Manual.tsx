@@ -25,16 +25,33 @@ import type {
   RegistrationOption,
 } from "@/shared/schema";
 import { detectIdentifierType, normalizeIdentifier } from "@/shared/identifier";
+import { validateHadir } from "@/shared/loket";
 import { actionForLookup, identifierKey, lookupReasonLabel } from "@/shared/mode";
 import type { IdentifierType } from "@/shared/types";
 import { manualHasUnsavedWork } from "@/shared/unsaved";
-import { ClientError, api } from "@/web/lib/api";
+import { ClientError, api, type HealthPayload } from "@/web/lib/api";
 import { IDENTIFIER_LABEL } from "@/web/lib/format";
 
 const NONE = "__none__";
 
-/** Pilihan radio identitas: "auto" menebak dari bentuk nomor. */
+/** Radio choice: "auto" infers the identifier kind from the number format. */
 type IdentifierChoice = IdentifierType | "auto";
+
+type PrintStatus = "tidak" | "terkirim" | "gagal_kirim" | "terlewat";
+type HadirStatus = "tidak" | "terkirim" | "warning" | "gagal_kirim";
+type HadirWarning = "log_lokal_gagal" | "pcare_sudah_terdaftar";
+
+const HADIR_WARNING_MESSAGE: Record<HadirWarning, string> = {
+  log_lokal_gagal: "Kehadiran terkirim, tetapi log lokal gagal disimpan — jangan klik ulang",
+  pcare_sudah_terdaftar:
+    "Kehadiran terkirim, tetapi PCARE menolak: pasien sudah terdaftar di poli yang sama hari ini — jangan klik ulang",
+};
+
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ClientError) return error.message;
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
 
 const IDENTIFIER_CHOICE_LABEL: Record<IdentifierChoice, string> = {
   auto: "Auto",
@@ -108,6 +125,47 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
   const [result, setResult] = useState<APMQueueResult | null>(null);
   const [issuedCode, setIssuedCode] = useState("");
 
+  // External loket actions are read from BFF health, never from local settings.
+  const [health, setHealth] = useState<HealthPayload | null>(null);
+  const [printStatus, setPrintStatus] = useState<PrintStatus>("tidak");
+  const [hadirStatus, setHadirStatus] = useState<HadirStatus>("tidak");
+  const [hadirWarning, setHadirWarning] = useState<HadirWarning | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const [sendingHadir, setSendingHadir] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .health()
+      .then((payload) => {
+        if (!cancelled) setHealth(payload);
+      })
+      .catch(() => {
+        // Hidden buttons are the safe default when health cannot be loaded.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Refresh flags when Step 4 opens so a failed first fetch cannot hide the
+  // action buttons after a successful registration.
+  useEffect(() => {
+    if (step !== 4) return;
+    let cancelled = false;
+    void api
+      .health()
+      .then((payload) => {
+        if (!cancelled) setHealth(payload);
+      })
+      .catch(() => {
+        // Keep the previous value; the save path also retries once.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step]);
+
   useEffect(() => {
     // Petugas + poscheck selalu dari server: nama lokasi tidak pernah
     // diketik manual di client, supaya tidak melenceng dari tabel `poschecks`.
@@ -163,6 +221,16 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
 
   const selectedPoli = useMemo(() => poli.find((item) => item.id === poliId), [poli, poliId]);
 
+  // The BFF owns this validation too; the UI only mirrors it to disable the button.
+  const hadirValidation = useMemo(
+    () =>
+      validateHadir({
+        noKartu: result?.bpjs?.no_kartu ?? "",
+        namaProvider: result?.bpjs?.nama_provider ?? "",
+      }),
+    [result],
+  );
+
   // poli berubah -> daftar dokter berubah -> kode dokter reset
   useEffect(() => {
     if (poliId === NONE) {
@@ -205,6 +273,12 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
     setDoctorCode(NONE);
     setSaveError(null);
     setResult(null);
+    setIssuedCode("");
+    setPrintStatus("tidak");
+    setHadirStatus("tidak");
+    setHadirWarning(null);
+    setPrinting(false);
+    setSendingHadir(false);
   }, []);
 
   const startBlankQueue = () => {
@@ -219,6 +293,10 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
     setDoctorCode(NONE);
     setSaveError(null);
     setResult(null);
+    setIssuedCode("");
+    setPrintStatus("tidak");
+    setHadirStatus("tidak");
+    setHadirWarning(null);
     setStep(2);
   };
 
@@ -231,6 +309,10 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
     setDoctorCode(NONE);
     setSaveError(null);
     setResult(null);
+    setIssuedCode("");
+    setPrintStatus("tidak");
+    setHadirStatus("tidak");
+    setHadirWarning(null);
     setStep(2);
   };
 
@@ -263,6 +345,30 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
     }
   };
 
+  const runPrint = async (queue: APMQueueResult) => {
+    if (queue.antrian.kode === "") return;
+    setPrinting(true);
+    try {
+      const sent = await api.print({ kode: queue.antrian.kode, poli: queue.poli.nama });
+      if (sent.skipped) {
+        setPrintStatus("terlewat");
+        return;
+      }
+      if (!sent.ok) {
+        setPrintStatus("gagal_kirim");
+        toast.error("Gagal mengirim perintah cetak");
+        return;
+      }
+      setPrintStatus("terkirim");
+      toast.success(`Perintah cetak terkirim untuk ${queue.antrian.kode}`);
+    } catch (error) {
+      setPrintStatus("gagal_kirim");
+      toast.error(errorMessage(error, "Gagal mengirim perintah cetak"));
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   const save = async () => {
     if (poliId === NONE) return;
     setSaving(true);
@@ -288,7 +394,7 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
           return;
         }
         body[identifierKey(identifierType)] = normalized.value;
-        // Registrasi selalu verifikasi BPJS supaya "Nama Faskes" terisi.
+        // Always verify BPJS on registration so the provider name is populated.
         body.pcare = true;
         body.petugas_id = tenaga;
       }
@@ -296,8 +402,13 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
       const queue = await api.queue(body);
       setResult(queue);
       setIssuedCode(queue.antrian.kode);
+      setPrintStatus("tidak");
+      setHadirStatus("tidak");
+      setHadirWarning(null);
       toast.success("Pendaftaran berhasil");
       setStep(4);
+
+      // Both loket actions are manual from Step 4; `Simpan` only registers.
     } catch (error) {
       if (error instanceof ClientError) setSaveError(error);
       else toast.error(error instanceof Error ? error.message : "Pendaftaran gagal");
@@ -306,9 +417,66 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
     }
   };
 
+  const sendHadir = async () => {
+    if (!result || !hadirValidation.ok || hadirStatus !== "tidak" || sendingHadir) return;
+    setSendingHadir(true);
+    try {
+      const sent = await api.hadir({
+        kode: result.antrian.kode,
+        poli: result.poli.nama || result.antrian.poli,
+        noKartu: result.bpjs?.no_kartu ?? "",
+        namaProvider: result.bpjs?.nama_provider ?? "",
+      });
+      if (sent.skipped) return;
+      if (!sent.ok || sent.state !== "terkirim") {
+        setHadirStatus("gagal_kirim");
+        toast.error("Gagal mengirim perintah kehadiran");
+        return;
+      }
+      if (sent.warning) {
+        setHadirStatus("warning");
+        setHadirWarning(sent.warning);
+        toast.warning(HADIR_WARNING_MESSAGE[sent.warning]);
+        return;
+      }
+      setHadirStatus("terkirim");
+      setHadirWarning(null);
+      toast.success(`Perintah kehadiran terkirim untuk ${result.antrian.kode}`);
+    } catch (error) {
+      setHadirStatus("gagal_kirim");
+      toast.error(errorMessage(error, "Gagal mengirim perintah kehadiran"));
+    } finally {
+      setSendingHadir(false);
+    }
+  };
+
   const canContinueToConfirm =
     poliId !== NONE && (doctors.length <= 1 || doctorCode !== NONE) &&
     !(fallback === false && !tenaga);
+
+  const printStatusText = {
+    tidak: "Cetak belum dikirim",
+    terkirim: "Perintah cetak terkirim",
+    gagal_kirim: "Gagal mengirim perintah cetak",
+    terlewat: "Perintah cetak terlewat",
+  }[printStatus];
+
+  const hadirStatusText =
+    hadirStatus === "warning" && hadirWarning
+      ? `Perintah kehadiran terkirim — ${HADIR_WARNING_MESSAGE[hadirWarning]}`
+      : {
+          tidak: "Kehadiran belum dikirim",
+          terkirim: "Perintah kehadiran terkirim",
+          gagal_kirim: "Gagal mengirim perintah kehadiran",
+          warning: "Perintah kehadiran terkirim",
+        }[hadirStatus];
+
+  const hadirAlreadySent = hadirStatus === "terkirim" || hadirStatus === "warning";
+  const hadirDisabledReason = !hadirValidation.ok
+    ? hadirValidation.message
+    : hadirAlreadySent
+      ? "Kehadiran sudah dikirim. Jangan klik ulang."
+      : "";
 
   return (
     <div className="space-y-6">
@@ -674,9 +842,57 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
               </dl>
             </div>
 
+            <div className="space-y-1 text-sm">
+              {health?.printEnabled ? (
+                <p
+                  className={
+                    printStatus === "gagal_kirim" ? "text-destructive" : "text-muted-foreground"
+                  }
+                >
+                  {printStatusText}
+                </p>
+              ) : null}
+              {health?.hadirEnabled ? (
+                <p
+                  className={
+                    hadirStatus === "gagal_kirim" ? "text-destructive" : "text-muted-foreground"
+                  }
+                >
+                  {hadirStatusText}
+                </p>
+              ) : null}
+            </div>
+
             <Separator />
 
-            <Button onClick={reset}>Daftar lagi</Button>
+            <div className="flex flex-wrap gap-2">
+              {health?.printEnabled ? (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (result) void runPrint(result);
+                  }}
+                  disabled={printing || !result}
+                >
+                  {printing
+                    ? "Mengirim..."
+                    : printStatus === "terkirim"
+                      ? "Cetak Ulang"
+                      : "Cetak Antrian"}
+                </Button>
+              ) : null}
+              {health?.hadirEnabled ? (
+                <Button
+                  variant="outline"
+                  onClick={() => void sendHadir()}
+                  disabled={sendingHadir || !hadirValidation.ok || hadirAlreadySent}
+                  title={hadirDisabledReason || undefined}
+                >
+                  {sendingHadir ? "Mengirim..." : "Hadir & Sinkronisasi"}
+                </Button>
+              ) : null}
+              <Button onClick={reset}>Daftar lagi</Button>
+            </div>
           </CardContent>
         </Card>
       ) : null}

@@ -68,14 +68,42 @@ export function matchHeader(header: string, field: ExcelField): number | null {
       if (contains("petugas") || contains("tenaga")) return 80;
       return null;
 
+    case "cetak":
+      if (h === "cetak" || h === "print" || h === "cetak_antrian") return 100;
+      if (h.startsWith("cetak_")) return 80;
+      return null;
+
     default:
       return null;
   }
 }
 
-export type ExcelField = "nik" | "bpjs" | "no_rm" | "poli" | "dokter" | "lokasi" | "tenaga";
+export type ExcelField =
+  | "nik"
+  | "bpjs"
+  | "no_rm"
+  | "poli"
+  | "dokter"
+  | "lokasi"
+  | "tenaga"
+  | "cetak";
 
-const FIELDS: ExcelField[] = ["nik", "bpjs", "no_rm", "poli", "dokter", "lokasi", "tenaga"];
+const FIELDS: ExcelField[] = [
+  "nik",
+  "bpjs",
+  "no_rm",
+  "poli",
+  "dokter",
+  "lokasi",
+  "tenaga",
+  "cetak",
+];
+
+/** Excel cells are read as strings; accept a few common truthy spellings. */
+export function isCetakCell(value: string): boolean {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "ya" || normalized === "y";
+}
 
 /** Urutan prioritas saat satu baris punya lebih dari satu kolom identitas terisi. */
 export const IDENTIFIER_ORDER = ["nik", "bpjs", "no_rm"] as const;

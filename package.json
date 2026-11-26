@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun run --parallel dev:*",
-    "dev:server": "MOCK_API=1 bun --watch src/server/index.ts",
+    "dev:server": "bun --watch src/server/index.ts",
     "dev:web": "vite",
     "build": "bunx vite build && bun build --compile src/server/index.ts --outfile antrian-client.exe",
     "build:web": "bunx vite build",

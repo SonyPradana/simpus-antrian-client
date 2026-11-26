@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import {
   buildPreview,
+  isCetakCell,
   matchDoctor,
   matchPoscheck,
   normalizePoliId,
@@ -37,7 +38,7 @@ const MAX_ROWS = 5000;
 const NONE = "__none__";
 
 /** Kolom non-identitas yang bisa dipetakan manual. */
-const COLUMN_FIELDS = ["poli", "dokter", "lokasi", "tenaga"] as const;
+const COLUMN_FIELDS = ["poli", "dokter", "lokasi", "tenaga", "cetak"] as const;
 type ColumnField = (typeof COLUMN_FIELDS)[number];
 
 const FIELD_LABEL: Record<ColumnField, string> = {
@@ -45,6 +46,7 @@ const FIELD_LABEL: Record<ColumnField, string> = {
   dokter: "Dokter (opsional)",
   lokasi: "Lokasi (opsional)",
   tenaga: "Petugas (opsional)",
+  cetak: "Cetak (true/1/ya)",
 };
 
 /** Kolom identitas: boleh lebih dari satu, dipilih per baris. */
@@ -76,6 +78,8 @@ export interface ExcelPanelProps {
   defaultPoscheckId: string;
   defaultTenaga: string;
   fallback: boolean;
+  /** default print flag for rows without an explicit Cetak column */
+  cetak: boolean;
   onAdd: (items: NewItem[]) => void;
   /** true selama file sudah dipilih tapi barisnya belum ditambahkan */
   onPendingChange?: (pending: boolean) => void;
@@ -96,6 +100,7 @@ export function ExcelPanel({
   defaultPoscheckId,
   defaultTenaga,
   fallback,
+  cetak,
   onAdd,
   onPendingChange,
 }: ExcelPanelProps) {
@@ -250,6 +255,8 @@ export function ExcelPanel({
         lokasi: matchedPoscheck?.nama ?? "",
         tenaga: tenagaRaw || defaultTenaga,
         fallback,
+        cetak:
+          mapping.cetak === undefined ? cetak : isCetakCell(row[mapping.cetak] ?? ""),
       });
     }
 

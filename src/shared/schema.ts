@@ -194,6 +194,27 @@ export const APMQueueResultSchema = z.object({
 });
 export type APMQueueResult = z.infer<typeof APMQueueResultSchema>;
 
+/* ------------------------------------------------------------------ *
+ * External loket actions (Cetak Antrian / Hadir & Sinkronisasi)
+ * ------------------------------------------------------------------ */
+
+/** Body of `/api/print` and part of `/api/hadir`. */
+export const PrintRequestSchema = z.object({
+  kode: z.string().min(1),
+  poli: z.string().default(""),
+});
+export type PrintRequest = z.infer<typeof PrintRequestSchema>;
+
+/**
+ * `noKartu` and `namaProvider` are used only by BFF validation; they are never
+ * sent to the external endpoint.
+ */
+export const HadirRequestSchema = PrintRequestSchema.extend({
+  noKartu: z.string().default(""),
+  namaProvider: z.string().default(""),
+});
+export type HadirRequest = z.infer<typeof HadirRequestSchema>;
+
 export const ApiErrorSchema = z.object({
   error: z.object({
     code: z.string(),

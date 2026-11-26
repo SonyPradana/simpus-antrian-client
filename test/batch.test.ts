@@ -22,6 +22,7 @@ function makeItem(store: Store, jobId: string, seq: number, overrides: Partial<Q
     lokasi: "PKD BANDARJO",
     tenaga: "44",
     fallback: false,
+    cetak: false,
     status: "menunggu",
     queueCode: "",
     message: "",
@@ -82,6 +83,7 @@ describe("body builder", () => {
     lokasi: "PKD BANDARJO",
     tenaga: "44",
     fallback: false,
+    cetak: false,
     status: "menunggu" as const,
     queueCode: "",
     message: "",
@@ -278,6 +280,66 @@ describe("BatchExecutor", () => {
     await executor.run(job.id, new JobControl());
 
     expect(seen).toEqual(["a", "b"]);
+  });
+
+  test("print opt-in sends one command and appends the status to the message", async () => {
+    const store = newStore();
+    const job = store.createJob("job-print-on", "input", false);
+    makeItem(store, job.id, 0, { cetak: true });
+
+    const calls: Array<{ kode: string; poli: string }> = [];
+    const executor = new BatchExecutor(store, fakeApi(), new JobEvents(), {
+      ...options,
+      print: async (input) => {
+        calls.push(input);
+        return { ok: true };
+      },
+    });
+    await executor.run(job.id, new JobControl());
+
+    const [item] = store.listItems(job.id);
+    expect(calls).toEqual([{ kode: "A002", poli: "Klaster 2 Ibu" }]);
+    expect(item?.status).toBe("sukses");
+    expect(item?.message).toBe("Perintah cetak terkirim");
+  });
+
+  test("print is skipped when the row is not opted in", async () => {
+    const store = newStore();
+    const job = store.createJob("job-print-off", "input", false);
+    makeItem(store, job.id, 0, { cetak: false });
+
+    let called = false;
+    const executor = new BatchExecutor(store, fakeApi(), new JobEvents(), {
+      ...options,
+      print: async () => {
+        called = true;
+        return { ok: true };
+      },
+    });
+    await executor.run(job.id, new JobControl());
+
+    expect(called).toBe(false);
+    const [item] = store.listItems(job.id);
+    expect(item?.message).toBe("");
+  });
+
+  test("print failure does not downgrade a successful registration", async () => {
+    const store = newStore();
+    const job = store.createJob("job-print-fail", "input", false);
+    makeItem(store, job.id, 0, { cetak: true });
+
+    const executor = new BatchExecutor(store, fakeApi(), new JobEvents(), {
+      ...options,
+      print: async () => {
+        throw new Error("printer offline");
+      },
+    });
+    await executor.run(job.id, new JobControl());
+
+    const [item] = store.listItems(job.id);
+    expect(item?.status).toBe("sukses");
+    expect(item?.queueCode).toBe("A002");
+    expect(item?.message).toBe("Perintah cetak gagal dikirim");
   });
 });
 

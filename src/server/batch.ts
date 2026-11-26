@@ -15,6 +15,7 @@ import { APMQueueResultSchema, type APMQueueBody } from "@/shared/schema";
 import type { JobEvent, QueueItem } from "@/shared/types";
 import { AntrianApiError, type AntrianApi } from "./antrian";
 import type { Store } from "./db";
+import type { LoketApi } from "./loket";
 
 /* ------------------------------- events ------------------------------- */
 
@@ -94,6 +95,8 @@ export class JobControl {
 export interface ExecutorOptions {
   /** kirim `pcare=true` (verifikasi BPJS). Registrasi default: true. */
   pcare: boolean;
+  /** Optional per-row printing. Hadir is never part of a batch job. */
+  print?: LoketApi["print"];
 }
 
 /**
@@ -161,6 +164,28 @@ export class BatchExecutor {
     this.events.publish({ type: "item", jobId, item });
   }
 
+  /**
+   * Print side effect: only when the operator opted in for this row and the
+   * global flag is enabled. A print failure never downgrades a successful
+   * registration.
+   */
+  private async withPrintMessage(
+    item: QueueItem,
+    kode: string,
+    poli: string,
+    baseMessage: string,
+  ): Promise<string> {
+    if (!this.options.print || !item.cetak || kode === "") return baseMessage;
+    const append = (text: string) => (baseMessage === "" ? text : `${baseMessage} · ${text}`);
+    try {
+      const result = await this.options.print({ kode, poli });
+      if (result.skipped) return baseMessage;
+      return append("Perintah cetak terkirim");
+    } catch {
+      return append("Perintah cetak gagal dikirim");
+    }
+  }
+
   private async executeItem(jobId: string, item: QueueItem): Promise<void> {
     const running = this.store.updateItem(item.id, {
       status: "berjalan",
@@ -171,6 +196,12 @@ export class BatchExecutor {
 
     try {
       const result = await this.api.apmQueue(buildRegistrationBody(item, this.options.pcare));
+      const message = await this.withPrintMessage(
+        item,
+        result.antrian.kode,
+        result.poli.nama,
+        "",
+      );
       const done = this.store.updateItem(item.id, {
         status: "sukses",
         queueCode: result.antrian.kode,
@@ -178,7 +209,7 @@ export class BatchExecutor {
         // Lokasi dan poscheck mengikuti response server, bukan salinan client.
         lokasi: result.lokasi ?? item.lokasi,
         poscheckId: result.poscheck_id ?? item.poscheckId,
-        message: "",
+        message,
         errorCode: "",
       });
       if (done) this.publishItem(jobId, done);
@@ -199,11 +230,19 @@ export class BatchExecutor {
         // `data` divalidasi, bukan di-cast: kontrak APM memakai bentuk queue
         // yang sama dengan response sukses.
         const parsed = APMQueueResultSchema.safeParse(error.data);
+        const kode = parsed.success ? parsed.data.antrian.kode : "";
+        const poli = parsed.success ? parsed.data.poli.nama : "";
+        const message = await this.withPrintMessage(
+          item,
+          kode,
+          poli,
+          "pasien sudah terdaftar hari ini",
+        );
         const done = this.store.updateItem(item.id, {
           status: "sukses",
-          queueCode: parsed.success ? parsed.data.antrian.kode : "",
+          queueCode: kode,
           lokasi: parsed.success ? (parsed.data.lokasi ?? item.lokasi) : item.lokasi,
-          message: "pasien sudah terdaftar hari ini",
+          message,
           errorCode: "",
           sudah_terdaftar: true,
         });
@@ -215,11 +254,17 @@ export class BatchExecutor {
       if (error.code === "PATIENT_NOT_FOUND" && item.fallback) {
         try {
           const result = await this.api.apmQueue(buildBlankBody(item));
+          const message = await this.withPrintMessage(
+            item,
+            result.antrian.kode,
+            result.poli.nama,
+            "pasien tidak ditemukan -issued sebagai pasien baru",
+          );
           const done = this.store.updateItem(item.id, {
             status: "sukses",
             queueCode: result.antrian.kode,
             lokasi: result.lokasi ?? item.lokasi,
-            message: "pasien tidak ditemukan -issued sebagai pasien baru",
+            message,
             errorCode: "",
           });
           if (done) this.publishItem(jobId, done);

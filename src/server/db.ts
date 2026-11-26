@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS job_items (
   lokasi           TEXT NOT NULL DEFAULT '',
   tenaga           TEXT NOT NULL DEFAULT '',
   fallback         INTEGER NOT NULL DEFAULT 0,
+  cetak            INTEGER NOT NULL DEFAULT 0,
   status           TEXT NOT NULL DEFAULT 'menunggu',
   queue_code       TEXT NOT NULL DEFAULT '',
   message          TEXT NOT NULL DEFAULT '',
@@ -72,6 +73,7 @@ interface ItemRow {
   lokasi: string;
   tenaga: string;
   fallback: number;
+  cetak: number;
   status: string;
   queue_code: string;
   message: string;
@@ -103,6 +105,7 @@ function toItem(row: ItemRow): QueueItem {
     lokasi: row.lokasi,
     tenaga: row.tenaga,
     fallback: row.fallback === 1,
+    cetak: row.cetak === 1,
     status: row.status as ItemStatus,
     queueCode: row.queue_code,
     message: row.message,
@@ -128,6 +131,15 @@ export class Store {
     this.db.run("PRAGMA journal_mode = WAL;");
     this.db.run("PRAGMA foreign_keys = ON;");
     this.db.run(SCHEMA);
+
+    // Older databases were created before the `cetak` column existed.
+    // ALTER is idempotent here because the column list is checked first.
+    const columns = this.db.query("PRAGMA table_info(job_items)").all() as Array<{
+      name: string;
+    }>;
+    if (!columns.some((column) => column.name === "cetak")) {
+      this.db.run("ALTER TABLE job_items ADD COLUMN cetak INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   close(): void {
@@ -244,8 +256,8 @@ export class Store {
     const insert = this.db.query(
       `INSERT INTO job_items
         (id, job_id, seq, identifier_type, identifier_value, patient_name, poli_id, doctor_code,
-         poscheck_id, lokasi, tenaga, fallback, status, queue_code, message, error_code, sudah_terdaftar)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         poscheck_id, lokasi, tenaga, fallback, cetak, status, queue_code, message, error_code, sudah_terdaftar)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertAll = this.db.transaction((rows: QueueItem[]) => {
       for (const item of rows) {
@@ -262,6 +274,7 @@ export class Store {
           item.lokasi,
           item.tenaga,
           item.fallback ? 1 : 0,
+          item.cetak ? 1 : 0,
           item.status,
           item.queueCode,
           item.message,

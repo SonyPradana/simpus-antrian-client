@@ -71,6 +71,9 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
   const [poscheckId, setPoscheckId] = useState(NONE);
   const [tenaga, setTenaga] = useState("");
   const [fallback, setFallback] = useState(false);
+  /** Per-row print default for manual input and Excel files without a Cetak column. */
+  const [cetak, setCetak] = useState(false);
+  const [printEnabled, setPrintEnabled] = useState(false);
   const [identifier, setIdentifier] = useState("");
   /** File Excel sudah dibaca tapi barisnya belum ditambahkan ke tabel. */
   const [excelPending, setExcelPending] = useState(false);
@@ -108,11 +111,16 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
     // pernah disimpan di client supaya tidak melenceng dari tabel `poschecks`.
     void (async () => {
       try {
-        const [current, options] = await Promise.all([api.getSettings(), api.options()]);
+        const [current, options, health] = await Promise.all([
+          api.getSettings(),
+          api.options(),
+          api.health().catch(() => null),
+        ]);
         setSettings(current);
         setPoscheck(options.poscheck);
         setPetugas(options.petugas);
         setTenaga(current.defaultTenaga || options.terpilih.petugas_id);
+        setPrintEnabled(health?.printEnabled ?? false);
         const preferred =
           current.defaultPoscheckId &&
           options.poscheck.some((item) => item.id === current.defaultPoscheckId)
@@ -250,6 +258,7 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
             lokasi: item.lokasi,
             tenaga: item.tenaga,
             fallback: item.fallback,
+            cetak: item.cetak,
           })),
         });
         setJob(created.job);
@@ -267,6 +276,7 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
             lokasi: item.lokasi,
             tenaga: item.tenaga,
             fallback: item.fallback,
+            cetak: item.cetak,
           })),
         );
         setItems(updated);
@@ -330,6 +340,7 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
         lokasi: selectedPoscheck?.nama ?? "",
         tenaga,
         fallback,
+        cetak,
       })),
     );
     setIdentifier("");
@@ -551,6 +562,22 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
               </span>
             </label>
 
+            {printEnabled ? (
+              <label className="flex items-start gap-2 text-sm">
+                <Checkbox
+                  checked={cetak}
+                  onCheckedChange={(checked) => setCetak(checked === true)}
+                />
+                <span>
+                  <span className="font-medium">Cetak antrian setelah terbit</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Berlaku untuk baris baru. Excel bisa meng-override per baris lewat kolom
+                    &quot;Cetak&quot; berisi true/1/ya.
+                  </span>
+                </span>
+              </label>
+            ) : null}
+
             <fieldset className="space-y-2">
               <legend className="mb-2 text-sm font-medium">Jenis identitas</legend>
               <RadioGroup
@@ -600,6 +627,7 @@ export function Batch({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => v
           defaultPoscheckId={selectedPoscheck?.id ?? settings?.defaultPoscheckId ?? ""}
           defaultTenaga={tenaga || settings?.defaultTenaga || ""}
           fallback={fallback}
+          cetak={cetak}
           onAdd={(newItems) => void addItems(newItems)}
           onPendingChange={setExcelPending}
         />

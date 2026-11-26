@@ -22,6 +22,8 @@ export interface QueueItem {
   /** worker id -> dikirim sebagai `petugas_id` (khusus mode registration) */
   tenaga: string;
   fallback: boolean;
+  /** per-row print opt-in (batch only) */
+  cetak: boolean;
   status: ItemStatus;
   queueCode: string;
   message: string;
@@ -61,6 +63,7 @@ export interface NewItem {
   lokasi: string;
   tenaga: string;
   fallback: boolean;
+  cetak: boolean;
 }
 
 /** Pemetaan kolom Excel -> field item. */
@@ -76,6 +79,7 @@ export interface ExcelMapping {
   dokter?: number;
   lokasi?: number;
   tenaga?: number;
+  cetak?: number;
 }
 
 export interface ExcelPreview {

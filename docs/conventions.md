@@ -20,8 +20,9 @@ Contribution guide and code map for this repo.
 
 ```
 src/
-  server/      BFF: db, antrian (HTTP client), mock, batch, auth, index (route)
-  shared/      shared by server + web + tests
+  server/      BFF: db, antrian (HTTP client), loket (external actions), mock,
+               batch, auth, index (route)
+  shared/      shared by server + web + tests; includes loket.ts (pure rules)
   web/         React
     pages/     Manual, Batch
     components/ app components (not shadcn)
@@ -38,7 +39,7 @@ docs/          conventions.md
 |---|---|
 | API data shapes | `src/shared/schema.ts` — the only place |
 | Client-owned types (Job, QueueItem, Settings) | `src/shared/types.ts` |
-| Pure testable logic (excel, dedupe, identifier) | `src/shared/*.ts` |
+| Pure testable logic (excel, dedupe, identifier, loket validation/payload) | `src/shared/*.ts` |
 | Routes / DB access / executor | `src/server/*.ts` |
 | Page components | `src/web/pages/` |
 | Reusable components | `src/web/components/` |
@@ -53,6 +54,7 @@ test for it.
 ```
 UI (web/) -> /api/* (BFF Elysia) -> AntrianApi -> Go API
                                     \-> mock (MOCK_API=1)
+                                    \-> LoketApi -> external queue app
 ```
 
 The browser **never** calls the Go API directly. Everything goes through the
@@ -78,6 +80,26 @@ APM rules that apply (server contract §2.9):
   guess.
 - Lookup uses `pcare=false`; registration uses `pcare=true`.
 
+### External loket actions
+
+`LoketApi` (`src/server/loket.ts`) talks to the external queue app only from
+the BFF. `src/shared/loket.ts` holds the pure payload builder and Hadir
+validator shared with the browser.
+
+- Print uses exactly four form fields: `kode`, `unit`, `poli`, `unitId`.
+  `PRINT_UNIT` must be `Pendaftaran`; any other value returns HTTP 200 but does
+  not print. HTTP 200 only means the command was accepted.
+- Both print and Hadir are manual only, from the Step 4 buttons. `Simpan`
+  (`POST /api/queue`) never triggers either action. Neither action claims that
+  paper was printed or that BPJS was updated.
+- Hadir needs `ci_session` hydration, follows the `303` redirect, and treats
+  success text in the body as authoritative. HTTP 500 can still contain a
+  success message. Retry only once, and only for a lost session — never after
+  success or a 500 response.
+- Batch jobs may print per row when `PRINT_ON_BATCH=1` and the row is opted in.
+  Hadir is never part of a batch. A print failure keeps the registration status
+  successful and appends a note to `message`.
+
 ### Environment
 
 `src/server/config.ts` reads `.env` from the working directory and never
@@ -89,9 +111,20 @@ overrides a variable that is already set in the shell.
 | `APM_BASE_URL` | settings | overrides the Settings base URL |
 | `APM_API_KEY` | *(empty)* | APM facade key, BFF only |
 | `AUTH_PASSWORD` | *(empty)* | enables login |
+| `PRINT_API_BASE_URL` | *(empty)* | external loket base URL; empty disables both actions |
+| `PRINT_ENABLED` | from URL | explicit print kill switch |
+| `PRINT_UNIT` | `Pendaftaran` | exact value required by the external print command |
+| `PRINT_UNIT_ID` | `99` | unit id sent to the external endpoint |
+| `PRINT_TIMEOUT_MS` | `5000` | timeout per external request |
+| `PRINT_ALLOW_MOCK` | `0` | allow external actions with mock queue codes |
+| `PRINT_ON_BATCH` | `0` | global gate for per-row batch print |
+| `HADIR_ENABLED` | from `PRINT_ENABLED` | explicit Hadir kill switch |
+| `HADIR_ALLOW_MOCK` | from `PRINT_ALLOW_MOCK` | allow Hadir with mock queue codes |
+| `LOKET_DATAUNIT` | `Pendaftaran_1` | hydration path used with unit 99 |
 
 Mock is **not** part of `Settings` and is not editable from the UI; it is
-decided at process start.
+decided at process start. External actions are additionally disabled under
+`MOCK_API=1` unless the matching `*_ALLOW_MOCK` flag is set.
 
 ## 4. Adding a shadcn component
 
@@ -129,8 +162,9 @@ Follow the pattern in `src/server/index.ts`:
 ## 7. Tests
 
 - `bun test`, files `test/*.test.ts`, import via the `@/` alias.
-- Required tests: Excel parser, identity normalization, dedupe, batch executor.
-  Not required: presentational components.
+- Required tests: Excel parser, identity normalization, dedupe, batch executor,
+  loket payload/validation/HTTP classification. Not required: presentational
+  components.
 - Tests must be able to **fail** when business rules change. Do not test that a
   function "does not throw error".
 

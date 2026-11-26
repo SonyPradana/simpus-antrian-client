@@ -19,12 +19,27 @@ import {
   APM_BASE_URL,
   DB_PATH,
   DIST_DIR,
+  HADIR_ALLOW_MOCK,
+  HADIR_ENABLED,
+  LOKET_DATAUNIT,
   MOCK_API,
   PORT,
+  PRINT_ALLOW_MOCK,
+  PRINT_API_BASE_URL,
+  PRINT_ENABLED,
+  PRINT_ON_BATCH,
+  PRINT_TIMEOUT_MS,
+  PRINT_UNIT,
+  PRINT_UNIT_ID,
 } from "./config";
 import { Store } from "./db";
+import { createDisabledLoketApi, createLoketApi, LoketApiError, type LoketApi } from "./loket";
 import { createMockApi } from "./mock";
-import { APMQueueBodySchema } from "@/shared/schema";
+import {
+  APMQueueBodySchema,
+  HadirRequestSchema,
+  PrintRequestSchema,
+} from "@/shared/schema";
 import type { Job, QueueItem } from "@/shared/types";
 
 const CACHE_TTL = {
@@ -36,6 +51,22 @@ const CACHE_TTL = {
 const store = new Store(DB_PATH);
 const events = new JobEvents();
 const sessions: SessionStore = createSessionStore(store);
+
+/* ----------------------- external loket actions ----------------------- */
+
+/** Mock queue codes do not exist in the external database, so default off. */
+const printEnabled = PRINT_ENABLED && (!MOCK_API || PRINT_ALLOW_MOCK);
+const hadirEnabled = HADIR_ENABLED && (!MOCK_API || HADIR_ALLOW_MOCK);
+
+const loketApi: LoketApi = printEnabled || hadirEnabled
+  ? createLoketApi({
+      baseUrl: PRINT_API_BASE_URL,
+      unit: PRINT_UNIT,
+      unitId: PRINT_UNIT_ID,
+      dataUnit: LOKET_DATAUNIT,
+      timeoutMs: PRINT_TIMEOUT_MS,
+    })
+  : createDisabledLoketApi();
 
 /* --------------------------- api resolution --------------------------- */
 
@@ -84,6 +115,7 @@ function toItemPayload(item: QueueItem) {
     lokasi: item.lokasi,
     tenaga: item.tenaga,
     fallback: item.fallback,
+    cetak: item.cetak,
     status: item.status,
     queueCode: item.queueCode,
     message: item.message,
@@ -108,6 +140,18 @@ function errorStatus(error: unknown): number {
   return 500;
 }
 
+/** Loket actions have their own codes and do not inherit Go API errors. */
+function loketError(error: unknown) {
+  if (error instanceof LoketApiError) {
+    return { status: error.status, code: error.code, message: error.message };
+  }
+  return {
+    status: 502,
+    code: "LOKET_FAILED",
+    message: error instanceof Error ? error.message : "aksi loket gagal",
+  };
+}
+
 /* -------------------------------- jobs -------------------------------- */
 
 const controls = new Map<string, JobControl>();
@@ -122,6 +166,7 @@ const ItemInput = t.Object({
   lokasi: t.Optional(t.String()),
   tenaga: t.Optional(t.String()),
   fallback: t.Optional(t.Boolean()),
+  cetak: t.Optional(t.Boolean()),
 });
 
 const CreateJobBody = t.Object({
@@ -181,9 +226,13 @@ const app = new Elysia()
   /* ----------------------------- health ------------------------------- */
 
   .get("/api/health", () => ({
-    status: "ok",
-    mock: MOCK_API,
-    apmConfigured: APM_API_KEY !== "",
+    data: {
+      status: "ok",
+      mock: MOCK_API,
+      apmConfigured: APM_API_KEY !== "",
+      printEnabled,
+      hadirEnabled,
+    },
   }))
 
   /* --------------------------- data proxies --------------------------- */
@@ -232,6 +281,42 @@ const app = new Elysia()
       return { data: result };
     } catch (error) {
       return status(errorStatus(error), { error: errorPayload(error) });
+    }
+  })
+
+  /* ----------------------- external loket actions ----------------------- */
+
+  .post("/api/print", async ({ body, status }) => {
+    const parsed = PrintRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return status(400, {
+        error: { code: "INVALID_INPUT", message: "kode antrian wajib diisi" },
+      });
+    }
+    try {
+      return { data: await loketApi.print(parsed.data) };
+    } catch (error) {
+      const failure = loketError(error);
+      return status(failure.status, {
+        error: { code: failure.code, message: failure.message },
+      });
+    }
+  })
+
+  .post("/api/hadir", async ({ body, status }) => {
+    const parsed = HadirRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return status(400, {
+        error: { code: "INVALID_INPUT", message: "data kehadiran tidak lengkap" },
+      });
+    }
+    try {
+      return { data: await loketApi.hadir(parsed.data) };
+    } catch (error) {
+      const failure = loketError(error);
+      return status(failure.status, {
+        error: { code: failure.code, message: failure.message },
+      });
     }
   })
 
@@ -294,6 +379,7 @@ const app = new Elysia()
       lokasi: item.lokasi ?? "",
       tenaga: item.tenaga ?? "",
       fallback: item.fallback ?? body.fallback ?? false,
+      cetak: item.cetak ?? false,
       status: "menunggu",
       queueCode: "",
       message: "",
@@ -323,6 +409,7 @@ const app = new Elysia()
       lokasi: item.lokasi ?? "",
       tenaga: item.tenaga ?? "",
       fallback: item.fallback ?? job.fallback ?? false,
+      cetak: item.cetak ?? false,
       status: "menunggu",
       queueCode: "",
       message: "",
@@ -370,6 +457,8 @@ const app = new Elysia()
     const executor = new BatchExecutor(store, getApi(), events, {
       // Registrasi selalu verifikasi BPJS supaya "Nama Faskes" terisi.
       pcare: true,
+      // Hadir is never batched; print is per-row opt-in behind a global kill switch.
+      print: PRINT_ON_BATCH && printEnabled ? (input) => loketApi.print(input) : undefined,
     });
 
     const promise = executor.run(params.id, control).finally(() => {
@@ -479,5 +568,7 @@ console.log(
 if (!MOCK_API && APM_API_KEY === "") {
   console.warn("[antrian] APM_API_KEY kosong - facade /api/v1/apm/* akan menolak request");
 }
+console.log(`[antrian] print       ${printEnabled ? PRINT_API_BASE_URL : "disabled"}`);
+console.log(`[antrian] hadir       ${hadirEnabled ? PRINT_API_BASE_URL : "disabled"}`);
 
 export type { Job };
