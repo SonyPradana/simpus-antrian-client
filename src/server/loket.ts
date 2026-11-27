@@ -1,13 +1,13 @@
 /**
- * HTTP client for two actions in the external queue application:
- * CetakAntrian and Hadir. All requests come from the BFF, never the browser.
+ * HTTP client for two external loket actions. All requests come from the BFF,
+ * never the browser.
  *
- * Verified facts:
- * - print: static 200, no session required, `unit` must be exactly
- *   `Pendaftaran`.
- * - hadir: 303 -> /bpjs/process_bpjs_data/..., requires `ci_session`, and
- *   success must be read from the body. HTTP 500 can contain both a success
- *   message and a database error.
+ * - Print posts JSON to the simpus-antrian-terminal API: `POST /api/print`
+ *   with `X-API-Key`. The terminal owns the legacy print server and the
+ *   `printer = 'medium'` flag.
+ * - Hadir still uses the legacy CodeIgniter endpoint. It needs `ci_session`
+ *   hydration and body-text classification; HTTP 500 can contain both a
+ *   success message and a database error.
  */
 import { buildLoketPayload, dataUnitFor, validateHadir } from "@/shared/loket";
 import type { HadirRequest, PrintRequest } from "@/shared/schema";
@@ -33,7 +33,12 @@ export class LoketApiError extends Error {
 }
 
 export interface LoketConfig {
-  baseUrl: string;
+  /** Legacy base URL for the Hadir endpoint. */
+  hadirBaseUrl: string;
+  /** Base URL of the print terminal API; no `/api/print` suffix. */
+  printBaseUrl: string;
+  /** Secret sent as `X-API-Key` to the print terminal. */
+  apiKey: string;
   unitId: string;
   timeoutMs: number;
 }
@@ -44,6 +49,27 @@ export interface LoketApi {
 }
 
 type FetchLike = typeof fetch;
+
+/**
+ * Checks the unauthenticated terminal health endpoint. Any network error,
+ * non-2xx status, or degraded payload means printing must be disabled.
+ */
+export async function isPrintBackendReady(
+  cfg: Pick<LoketConfig, "printBaseUrl" | "timeoutMs">,
+  fetchImpl: FetchLike = fetch,
+): Promise<boolean> {
+  if (cfg.printBaseUrl === "") return false;
+  try {
+    const response = await fetchImpl(`${cfg.printBaseUrl}/healthz`, {
+      signal: AbortSignal.timeout(cfg.timeoutMs),
+    });
+    if (!response.ok) return false;
+    const body = (await response.json()) as { status?: unknown; db?: unknown };
+    return body.status === "ok" && body.db === "ok";
+  } catch {
+    return false;
+  }
+}
 
 type HadirOutcome =
   | { ok: true; warning?: LoketWarning }
@@ -95,11 +121,32 @@ function extractCookie(response: Response): string {
   return match ? `ci_session=${match[1]}` : "";
 }
 
+interface PrintErrorBody {
+  error?: { code?: string; message?: string };
+}
+
+async function readPrintError(response: Response): Promise<PrintErrorBody["error"]> {
+  try {
+    const body = (await response.json()) as PrintErrorBody;
+    return body.error ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Terminal transport/auth failures are BFF failures, not client input errors. */
+function printErrorStatus(httpStatus: number): number {
+  if (httpStatus === 404) return 404;
+  if (httpStatus === 409) return 409;
+  if (httpStatus >= 500 || httpStatus === 401 || httpStatus === 403) return 502;
+  return 400;
+}
+
 export function createLoketApi(cfg: LoketConfig, fetchImpl: FetchLike = fetch): LoketApi {
   let cookie = "";
 
   function appRoot(): string {
-    const base = cfg.baseUrl.replace(/\/+$/, "");
+    const base = cfg.hadirBaseUrl.replace(/\/+$/, "");
     return `${base.replace(/\/index\.php\/Antrian$/i, "")}/`;
   }
 
@@ -111,7 +158,7 @@ export function createLoketApi(cfg: LoketConfig, fetchImpl: FetchLike = fetch): 
     try {
       return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(cfg.timeoutMs) });
     } catch {
-      throw new LoketApiError(timeoutCode, 502, "Permintaan ke server antrian gagal atau timeout");
+      throw new LoketApiError(timeoutCode, 502, "Permintaan ke server eksternal gagal atau timeout");
     }
   }
 
@@ -140,39 +187,51 @@ export function createLoketApi(cfg: LoketConfig, fetchImpl: FetchLike = fetch): 
 
   return {
     async print(input: PrintRequest): Promise<LoketResult> {
-      if (cfg.baseUrl === "") {
+      if (cfg.printBaseUrl === "" || cfg.apiKey === "") {
         throw new LoketApiError(
           "PRINT_NOT_CONFIGURED",
           502,
-          "PRINT_API_BASE_URL belum diisi",
+          "PRINT_API_BASE_URL atau PRINT_API_KEY belum diisi",
         );
       }
 
-      let body: string;
-      try {
-        body = buildLoketPayload(input, { unitId: cfg.unitId }).toString();
-      } catch (error) {
-        throw new LoketApiError(
-          "PRINT_CONFIG",
-          500,
-          error instanceof Error ? error.message : "konfigurasi cetak tidak valid",
-        );
+      const kode = input.kode.trim();
+      if (kode === "") {
+        throw new LoketApiError("PRINT_INVALID", 400, "kode antrian wajib diisi");
       }
 
       const response = await fetchWithTimeout(
-        `${cfg.baseUrl}/CetakAntrian`,
+        `${cfg.printBaseUrl}/api/print`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body,
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": cfg.apiKey,
+          },
+          body: JSON.stringify({ kode, force: input.force === true }),
         },
         "PRINT_TIMEOUT",
       );
-      if (!response.ok) {
+
+      // Duplicate guards are idempotent: the command is already recorded.
+      if (response.status === 409) {
+        const detail = await readPrintError(response);
+        if (detail?.code === "ALREADY_REQUESTED" || detail?.code === "ALREADY_PRINTED") {
+          return { ok: true };
+        }
         throw new LoketApiError(
-          "PRINT_FAILED",
-          502,
-          `Server antrian menolak perintah cetak (HTTP ${response.status})`,
+          detail?.code ?? "PRINT_NOT_ELIGIBLE",
+          409,
+          detail?.message ?? "Kode antrian tidak memenuhi syarat cetak",
+        );
+      }
+
+      if (!response.ok) {
+        const detail = await readPrintError(response);
+        throw new LoketApiError(
+          detail?.code ?? "PRINT_FAILED",
+          printErrorStatus(response.status),
+          detail?.message ?? `Terminal menolak perintah cetak (HTTP ${response.status})`,
         );
       }
       return { ok: true };
@@ -181,8 +240,8 @@ export function createLoketApi(cfg: LoketConfig, fetchImpl: FetchLike = fetch): 
     async hadir(input: HadirRequest): Promise<LoketResult> {
       const valid = validateHadir(input);
       if (!valid.ok) throw new LoketApiError("HADIR_INVALID", 400, valid.message);
-      if (cfg.baseUrl === "") {
-        throw new LoketApiError("HADIR_NOT_CONFIGURED", 502, "PRINT_API_BASE_URL belum diisi");
+      if (cfg.hadirBaseUrl === "") {
+        throw new LoketApiError("HADIR_NOT_CONFIGURED", 502, "HADIR_API_BASE_URL belum diisi");
       }
 
       let body: string;
@@ -198,7 +257,7 @@ export function createLoketApi(cfg: LoketConfig, fetchImpl: FetchLike = fetch): 
 
       const post = () =>
         fetchWithTimeout(
-          `${cfg.baseUrl}/Hadir`,
+          `${cfg.hadirBaseUrl}/Hadir`,
           {
             method: "POST",
             headers: {

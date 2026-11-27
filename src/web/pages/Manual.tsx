@@ -345,11 +345,15 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
     }
   };
 
-  const runPrint = async (queue: APMQueueResult) => {
+  const runPrint = async (queue: APMQueueResult, force = false) => {
     if (queue.antrian.kode === "") return;
     setPrinting(true);
     try {
-      const sent = await api.print({ kode: queue.antrian.kode, poli: queue.poli.nama });
+      const sent = await api.print({
+        kode: queue.antrian.kode,
+        poli: queue.poli.nama,
+        ...(force ? { force: true } : {}),
+      });
       if (sent.skipped) {
         setPrintStatus("terlewat");
         return;
@@ -477,6 +481,14 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
     : hadirAlreadySent
       ? "Kehadiran sudah dikirim. Jangan klik ulang."
       : "";
+
+  const printDisabledReason = !health
+    ? "Memeriksa status server cetak..."
+    : !health.printBackendReady
+      ? "Server cetak tidak siap. Tombol Cetak dinonaktifkan."
+      : !health.printEnabled
+        ? "Percetakan belum dikonfigurasi."
+        : "";
 
   return (
     <div className="space-y-6">
@@ -851,7 +863,9 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
                 >
                   {printStatusText}
                 </p>
-              ) : null}
+              ) : (
+                <p className="text-xs text-muted-foreground">{printDisabledReason}</p>
+              )}
               {health?.hadirEnabled ? (
                 <p
                   className={
@@ -861,26 +875,34 @@ export function Manual({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => 
                   {hadirStatusText}
                 </p>
               ) : null}
+              {health?.hadirEnabled && hadirDisabledReason ? (
+                <p
+                  className={
+                    !hadirValidation.ok ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+                  }
+                >
+                  {hadirDisabledReason}
+                </p>
+              ) : null}
             </div>
 
             <Separator />
 
             <div className="flex flex-wrap gap-2">
-              {health?.printEnabled ? (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (result) void runPrint(result);
-                  }}
-                  disabled={printing || !result}
-                >
-                  {printing
-                    ? "Mengirim..."
-                    : printStatus === "terkirim"
-                      ? "Cetak Ulang"
-                      : "Cetak Antrian"}
-                </Button>
-              ) : null}
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (result) void runPrint(result, printStatus === "terkirim");
+                }}
+                disabled={!health?.printEnabled || printing || !result}
+                title={printDisabledReason || undefined}
+              >
+                {printing
+                  ? "Mengirim..."
+                  : printStatus === "terkirim"
+                    ? "Cetak Ulang"
+                    : "Cetak Antrian"}
+              </Button>
               {health?.hadirEnabled ? (
                 <Button
                   variant="outline"

@@ -198,10 +198,11 @@ export type APMQueueResult = z.infer<typeof APMQueueResultSchema>;
  * External loket actions (Cetak Antrian / Hadir & Sinkronisasi)
  * ------------------------------------------------------------------ */
 
-/** Body of `/api/print` and part of `/api/hadir`. */
+/** Body of `/api/print`; `force` is forwarded to the terminal for reprints. */
 export const PrintRequestSchema = z.object({
   kode: z.string().min(1),
   poli: z.string().default(""),
+  force: z.boolean().optional(),
 });
 export type PrintRequest = z.infer<typeof PrintRequestSchema>;
 

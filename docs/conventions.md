@@ -82,23 +82,30 @@ APM rules that apply (server contract §2.9):
 
 ### External loket actions
 
-`LoketApi` (`src/server/loket.ts`) talks to the external queue app only from
-the BFF. `src/shared/loket.ts` holds the pure payload builder and Hadir
-validator shared with the browser.
+`LoketApi` (`src/server/loket.ts`) talks to external apps only from the BFF.
+`src/shared/loket.ts` holds the pure Hadir payload builder and validator shared
+with the browser.
 
-- Print uses exactly four form fields: `kode`, `unit`, `poli`, `unitId`. `unit`
-  is hardcoded to `Pendaftaran`; other values return HTTP 200 but do not print.
-  HTTP 200 only means the command was accepted.
+- Print posts `{"kode":"B001","force":false}` plus `X-API-Key` to
+  `${PRINT_API_BASE_URL}/api/print`. The legacy form endpoint was removed; the
+  terminal handles the legacy print server and the `printer = 'medium'` flag.
+  `force: true` is used only by `Cetak Ulang`. `409 ALREADY_REQUESTED` and
+  `ALREADY_PRINTED` are idempotent successes. HTTP 200 only means the command
+  was accepted; it is not proof that paper was printed.
 - Both print and Hadir are manual only, from the Step 4 buttons. `Simpan`
   (`POST /api/queue`) never triggers either action. Neither action claims that
   paper was printed or that BPJS was updated.
-- Hadir needs `ci_session` hydration, follows the `303` redirect, and treats
-  success text in the body as authoritative. The hydration data unit is derived
-  from `PRINT_UNIT_ID` (`99→Pendaftaran_1`, `96→Pendaftaran_2`,
+- Hadir still posts the four form fields to `${HADIR_API_BASE_URL}/Hadir`. It
+  needs `ci_session` hydration, follows the `303` redirect, and treats success
+  text in the body as authoritative. The hydration data unit is derived from
+  `PRINT_UNIT_ID` (`99→Pendaftaran_1`, `96→Pendaftaran_2`,
   `88→Pendaftaran_3`). HTTP 500 can still contain a success message. Retry only
   once, and only for a lost session — never after success or a 500 response.
-- Batch jobs may print per row when the row is opted in and the shared loket
-  gate is active. Hadir is never part of a batch. A print failure keeps the
+- `GET /api/health` checks `${PRINT_API_BASE_URL}/healthz`. When the terminal
+  is unavailable, `printBackendReady` is `false` and only Cetak is disabled;
+  Hadir is unaffected.
+- Batch jobs may print per row when the row is opted in and print is
+  configured. Hadir is never part of a batch. A print failure keeps the
   registration status successful and appends a note to `message`.
 
 ### Environment
@@ -112,13 +119,16 @@ overrides a variable that is already set in the shell.
 | `APM_BASE_URL` | settings | overrides the Settings base URL |
 | `APM_API_KEY` | *(empty)* | APM facade key, BFF only |
 | `AUTH_PASSWORD` | *(empty)* | enables login |
-| `PRINT_API_BASE_URL` | *(empty)* | external loket base URL; empty disables both actions |
-| `PRINT_ENABLED` | from URL | explicit kill switch for both loket actions |
-| `PRINT_UNIT_ID` | `99` | unit id sent to the endpoint; selects the session data unit |
+| `PRINT_API_BASE_URL` | *(empty)* | terminal base URL; empty disables Cetak |
+| `PRINT_API_KEY` | *(empty)* | terminal API key, BFF only |
+| `HADIR_API_BASE_URL` | *(empty)* | legacy app base URL; empty disables Hadir |
+| `PRINT_ENABLED` | from URLs | explicit kill switch for both loket actions |
+| `PRINT_UNIT_ID` | `99` | selects the Hadir session data unit |
 | `PRINT_TIMEOUT_MS` | `5000` | timeout per external request |
 
-The effective gate is `PRINT_API_BASE_URL !== "" && PRINT_ENABLED && !MOCK_API`.
-Mock is **not** part of `Settings` and is not editable from the UI; it is
+The effective gates are `PRINT_ENABLED && !MOCK_API`, then `PRINT_API_BASE_URL
+!== "" && PRINT_API_KEY !== ""` for Cetak and `HADIR_API_BASE_URL !== ""` for
+Hadir. Mock is **not** part of `Settings` and is not editable from the UI; it is
 decided at process start. Mock mode always disables external loket actions.
 
 ## 4. Adding a shadcn component

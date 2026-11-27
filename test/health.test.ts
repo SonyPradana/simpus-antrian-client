@@ -13,6 +13,7 @@ describe("api.health", () => {
       status: "ok",
       mock: false,
       apmConfigured: true,
+      printBackendReady: true,
       printEnabled: true,
       hadirEnabled: true,
     };

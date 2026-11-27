@@ -55,16 +55,27 @@ export const APM_BASE_URL = (process.env.APM_BASE_URL ?? "").trim();
 /* ------------------- external loket actions ------------------- */
 
 /**
- * Base URL for loket actions, for example
- * `http://192.168.1.99/antrian/index.php/Antrian`.
- * Empty means the actions are disabled. Do not hardcode a production host.
+ * Base URL of the print terminal API, for example `http://localhost:8080`.
+ * The BFF appends `/api/print` and `/healthz`. Empty disables printing.
  */
 export const PRINT_API_BASE_URL = (process.env.PRINT_API_BASE_URL ?? "")
   .trim()
   .replace(/\/+$/, "");
 
-/** Unit id sent to the external endpoint; also selects the session data unit. */
+/** Secret sent as `X-API-Key` to the print terminal. BFF only. */
+export const PRINT_API_KEY = (process.env.PRINT_API_KEY ?? "").trim();
+
+/** Legacy CodeIgniter base URL used by Hadir, for example
+ * `http://192.168.1.99/antrian/index.php/Antrian`. Empty disables Hadir. */
+export const HADIR_API_BASE_URL = (process.env.HADIR_API_BASE_URL ?? "")
+  .trim()
+  .replace(/\/+$/, "");
+
+/** Unit id used for Hadir payloads and session data-unit selection. */
 export const PRINT_UNIT_ID = (process.env.PRINT_UNIT_ID ?? "99").trim();
 export const PRINT_TIMEOUT_MS = Number(process.env.PRINT_TIMEOUT_MS ?? 5000);
 
-export const PRINT_ENABLED = bool(process.env.PRINT_ENABLED, PRINT_API_BASE_URL !== "");
+export const PRINT_ENABLED = bool(
+  process.env.PRINT_ENABLED,
+  PRINT_API_BASE_URL !== "" || HADIR_API_BASE_URL !== "",
+);

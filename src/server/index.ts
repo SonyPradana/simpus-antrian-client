@@ -19,15 +19,23 @@ import {
   APM_BASE_URL,
   DB_PATH,
   DIST_DIR,
+  HADIR_API_BASE_URL,
   MOCK_API,
   PORT,
   PRINT_API_BASE_URL,
+  PRINT_API_KEY,
   PRINT_ENABLED,
   PRINT_TIMEOUT_MS,
   PRINT_UNIT_ID,
 } from "./config";
 import { Store } from "./db";
-import { createDisabledLoketApi, createLoketApi, LoketApiError, type LoketApi } from "./loket";
+import {
+  createDisabledLoketApi,
+  createLoketApi,
+  isPrintBackendReady,
+  LoketApiError,
+  type LoketApi,
+} from "./loket";
 import { createMockApi } from "./mock";
 import {
   APMQueueBodySchema,
@@ -48,18 +56,30 @@ const sessions: SessionStore = createSessionStore(store);
 
 /* ----------------------- external loket actions ----------------------- */
 
-/** One gate for both loket actions; mock codes never reach the external app. */
-const loketAktif = PRINT_API_BASE_URL !== "" && PRINT_ENABLED && !MOCK_API;
-const printEnabled = loketAktif;
-const hadirEnabled = loketAktif;
+/** Mock codes never reach either external app. */
+const loketAktif = PRINT_ENABLED && !MOCK_API;
+const printConfigured = loketAktif && PRINT_API_BASE_URL !== "" && PRINT_API_KEY !== "";
+const hadirEnabled = loketAktif && HADIR_API_BASE_URL !== "";
 
-const loketApi: LoketApi = loketAktif
-  ? createLoketApi({
-      baseUrl: PRINT_API_BASE_URL,
-      unitId: PRINT_UNIT_ID,
-      timeoutMs: PRINT_TIMEOUT_MS,
-    })
-  : createDisabledLoketApi();
+const loketApi: LoketApi =
+  printConfigured || hadirEnabled
+    ? createLoketApi({
+        hadirBaseUrl: HADIR_API_BASE_URL,
+        printBaseUrl: PRINT_API_BASE_URL,
+        apiKey: PRINT_API_KEY,
+        unitId: PRINT_UNIT_ID,
+        timeoutMs: PRINT_TIMEOUT_MS,
+      })
+    : createDisabledLoketApi();
+
+/** Only Cetak depends on the print terminal; Hadir uses the legacy app. */
+async function printBackendReady(): Promise<boolean> {
+  if (!printConfigured) return false;
+  return isPrintBackendReady({
+    printBaseUrl: PRINT_API_BASE_URL,
+    timeoutMs: PRINT_TIMEOUT_MS,
+  });
+}
 
 /* --------------------------- api resolution --------------------------- */
 
@@ -218,15 +238,19 @@ const app = new Elysia()
 
   /* ----------------------------- health ------------------------------- */
 
-  .get("/api/health", () => ({
-    data: {
-      status: "ok",
-      mock: MOCK_API,
-      apmConfigured: APM_API_KEY !== "",
-      printEnabled,
-      hadirEnabled,
-    },
-  }))
+  .get("/api/health", async () => {
+    const ready = await printBackendReady();
+    return {
+      data: {
+        status: "ok",
+        mock: MOCK_API,
+        apmConfigured: APM_API_KEY !== "",
+        printBackendReady: ready,
+        printEnabled: printConfigured && ready,
+        hadirEnabled,
+      },
+    };
+  })
 
   /* --------------------------- data proxies --------------------------- */
 
@@ -451,7 +475,7 @@ const app = new Elysia()
       // Registrasi selalu verifikasi BPJS supaya "Nama Faskes" terisi.
       pcare: true,
       // Hadir is never batched; print is opt-in per row.
-      print: loketAktif ? (input) => loketApi.print(input) : undefined,
+      print: printConfigured ? (input) => loketApi.print(input) : undefined,
     });
 
     const promise = executor.run(params.id, control).finally(() => {
@@ -561,7 +585,7 @@ console.log(
 if (!MOCK_API && APM_API_KEY === "") {
   console.warn("[antrian] APM_API_KEY kosong - facade /api/v1/apm/* akan menolak request");
 }
-console.log(`[antrian] print       ${printEnabled ? PRINT_API_BASE_URL : "disabled"}`);
-console.log(`[antrian] hadir       ${hadirEnabled ? PRINT_API_BASE_URL : "disabled"}`);
+console.log(`[antrian] print       ${printConfigured ? PRINT_API_BASE_URL : "disabled"}`);
+console.log(`[antrian] hadir       ${hadirEnabled ? HADIR_API_BASE_URL : "disabled"}`);
 
 export type { Job };

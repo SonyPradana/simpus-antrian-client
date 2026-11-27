@@ -3,12 +3,15 @@ import {
   classifyHadir,
   createDisabledLoketApi,
   createLoketApi,
+  isPrintBackendReady,
   LoketApiError,
 } from "@/server/loket";
 import { buildLoketPayload, dataUnitFor, validateHadir } from "@/shared/loket";
 
 const config = {
-  baseUrl: "http://example.test/antrian/index.php/Antrian",
+  hadirBaseUrl: "http://example.test/antrian/index.php/Antrian",
+  printBaseUrl: "http://terminal.test:8080",
+  apiKey: "test-token",
   unitId: "99",
   timeoutMs: 1000,
 };
@@ -162,22 +165,126 @@ describe("classifyHadir", () => {
   });
 });
 
+describe("isPrintBackendReady", () => {
+  test("accepts only an ok healthz payload", async () => {
+    const ok = fakeFetch(
+      () =>
+        new Response(JSON.stringify({ status: "ok", db: "ok", time: "2026-11-27T00:00:00Z" })),
+    );
+    await expect(
+      isPrintBackendReady({ printBaseUrl: config.printBaseUrl, timeoutMs: 1000 }, ok.fetchImpl),
+    ).resolves.toBe(true);
+    expect(ok.calls[0]?.url).toBe(`${config.printBaseUrl}/healthz`);
+
+    const degraded = fakeFetch(
+      () =>
+        new Response(JSON.stringify({ status: "ok", db: "error" }), { status: 503 }),
+    );
+    await expect(
+      isPrintBackendReady(
+        { printBaseUrl: config.printBaseUrl, timeoutMs: 1000 },
+        degraded.fetchImpl,
+      ),
+    ).resolves.toBe(false);
+  });
+
+  test("returns false when the base URL is empty or the request fails", async () => {
+    const { fetchImpl, calls } = fakeFetch(() => new Response("{}"));
+    await expect(
+      isPrintBackendReady({ printBaseUrl: "", timeoutMs: 1000 }, fetchImpl),
+    ).resolves.toBe(false);
+    expect(calls).toHaveLength(0);
+
+    const failing = fakeFetch(() => {
+      throw new Error("offline");
+    });
+    await expect(
+      isPrintBackendReady(
+        { printBaseUrl: config.printBaseUrl, timeoutMs: 1000 },
+        failing.fetchImpl,
+      ),
+    ).resolves.toBe(false);
+  });
+});
+
 describe("createLoketApi.print", () => {
-  test("posts the verified form to /CetakAntrian and accepts a static 200", async () => {
+  test("posts JSON to the terminal with the API key and no force by default", async () => {
     const { calls, fetchImpl } = fakeFetch(
-      () => new Response("<div class='alert alert-info'>Cetak Antrian</div>", { status: 200 }),
+      () =>
+        new Response(
+          JSON.stringify({
+            kode: "B001",
+            unit_id: "Pendaftaran",
+            printer: "medium",
+            rows_terubah: 1,
+          }),
+          { status: 200 },
+        ),
     );
     const api = createLoketApi(config, fetchImpl);
 
-    const result = await api.print({ kode: "B001", poli: "Lintas Klaster Gigi" });
+    const result = await api.print({ kode: " B001 ", poli: "Lintas Klaster Gigi" });
 
     expect(result).toEqual({ ok: true });
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe(`${config.baseUrl}/CetakAntrian`);
+    expect(calls[0]?.url).toBe(`${config.printBaseUrl}/api/print`);
     expect(calls[0]?.init?.method).toBe("POST");
-    expect(calls[0]?.init?.body).toBe(
-      "kode=B001&unit=Pendaftaran&poli=Lintas+Klaster+Gigi&unitId=99",
+    expect(getHeader(calls[0], "X-API-Key")).toBe("test-token");
+    expect(calls[0]?.init?.body).toBe(JSON.stringify({ kode: "B001", force: false }));
+  });
+
+  test("sends force:true for a reprint", async () => {
+    const { calls, fetchImpl } = fakeFetch(
+      () => new Response(JSON.stringify({ rows_terubah: 1 })),
     );
+    const api = createLoketApi(config, fetchImpl);
+
+    await api.print({ kode: "C021", poli: "", force: true });
+
+    expect(calls[0]?.init?.body).toBe(JSON.stringify({ kode: "C021", force: true }));
+  });
+
+  test("treats duplicate guards as an already-recorded command", async () => {
+    for (const code of ["ALREADY_REQUESTED", "ALREADY_PRINTED"]) {
+      const { fetchImpl } = fakeFetch(
+        () =>
+          new Response(JSON.stringify({ error: { code, message: "already" } }), { status: 409 }),
+      );
+      const api = createLoketApi(config, fetchImpl);
+      await expect(api.print({ kode: "B001", poli: "" })).resolves.toEqual({ ok: true });
+    }
+  });
+
+  test("surfaces non-duplicate terminal errors and config errors", async () => {
+    const notEligible = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({ error: { code: "NOT_ELIGIBLE", message: "tgl_lahir invalid" } }),
+          { status: 409 },
+        ),
+    );
+    await expectLoketError(
+      createLoketApi(config, notEligible.fetchImpl).print({ kode: "B001", poli: "" }),
+      "NOT_ELIGIBLE",
+    );
+
+    const unauthorized = fakeFetch(
+      () =>
+        new Response(JSON.stringify({ error: { code: "UNAUTHORIZED", message: "bad key" } }), {
+          status: 401,
+        }),
+    );
+    await expectLoketError(
+      createLoketApi(config, unauthorized.fetchImpl).print({ kode: "B001", poli: "" }),
+      "UNAUTHORIZED",
+    );
+
+    const { fetchImpl, calls } = fakeFetch(() => new Response("{}"));
+    await expectLoketError(
+      createLoketApi({ ...config, apiKey: "" }, fetchImpl).print({ kode: "B001", poli: "" }),
+      "PRINT_NOT_CONFIGURED",
+    );
+    expect(calls).toHaveLength(0);
   });
 });
 
@@ -197,7 +304,7 @@ describe("createLoketApi.hadir", () => {
       "http://example.test/antrian/index.php/Antrian/DataFingerUnit/99/Pendaftaran_1",
     );
     expect(getHeader(calls[1], "Cookie")).toBe("ci_session=root-session");
-    expect(calls[2]?.url).toBe(`${config.baseUrl}/Hadir`);
+    expect(calls[2]?.url).toBe(`${config.hadirBaseUrl}/Hadir`);
     expect(getHeader(calls[2], "Cookie")).toBe("ci_session=final-session");
     expect(calls[2]?.init?.redirect).toBe("follow");
     expect(calls[2]?.init?.body).toBe(

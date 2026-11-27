@@ -54,6 +54,7 @@ export interface HealthPayload {
   status: string;
   mock: boolean;
   apmConfigured: boolean;
+  printBackendReady: boolean;
   printEnabled: boolean;
   hadirEnabled: boolean;
 }
@@ -156,7 +157,7 @@ export const api = {
 
   // Loket actions always go through the BFF; the browser never calls the
   // external host directly.
-  print: (input: { kode: string; poli: string }) =>
+  print: (input: { kode: string; poli: string; force?: boolean }) =>
     request<LoketResult>("/api/print", {
       method: "POST",
       body: JSON.stringify(input),

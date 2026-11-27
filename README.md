@@ -87,19 +87,28 @@ The queue is stored in SQLite, so refreshing the browser does not clear it.
 | `APM_BASE_URL` | *(settings)* | Go API base URL; overrides Settings |
 | `APM_API_KEY` | *(empty)* | APM API key (required when `MOCK_API=0`) |
 | `AUTH_PASSWORD` | *(empty)* | enable login |
-| `PRINT_API_BASE_URL` | *(empty)* | external loket base URL; empty disables both actions |
-| `PRINT_ENABLED` | from URL | explicit kill switch for both loket actions |
-| `PRINT_UNIT_ID` | `99` | unit id sent to the endpoint; selects the session data unit |
+| `PRINT_API_BASE_URL` | *(empty)* | simpus-antrian-terminal base URL; empty disables Cetak |
+| `PRINT_API_KEY` | *(empty)* | terminal `X-API-Key` secret; BFF only |
+| `HADIR_API_BASE_URL` | *(empty)* | legacy CodeIgniter base URL; empty disables Hadir |
+| `PRINT_ENABLED` | from URLs | explicit kill switch for both loket actions |
+| `PRINT_UNIT_ID` | `99` | selects the Hadir session data unit |
 | `PRINT_TIMEOUT_MS` | `5000` | timeout per external request |
 
-`unit` is hardcoded to `Pendaftaran` and the Hadir session data unit is derived
-from `PRINT_UNIT_ID`. Both loket actions share one gate:
-`PRINT_API_BASE_URL !== "" && PRINT_ENABLED && !MOCK_API`. Mock mode always
-disables them. Both Cetak Antrian and Hadir & Sinkronisasi are manual buttons in
-Step 4; `Simpan` only registers the patient. An HTTP 200 only means the command
-was accepted — it is not proof that paper was printed or BPJS was updated.
-Batch print is opt-in per row (checkbox or Excel `Cetak` column); Hadir is
-never batched.
+Print posts JSON `{ kode, force }` to `${PRINT_API_BASE_URL}/api/print`; the
+terminal owns the legacy print server and the `printer = 'medium'` flag. Hadir
+still posts to `${HADIR_API_BASE_URL}/Hadir`. `unit` is hardcoded to
+`Pendaftaran` and the Hadir session data unit is derived from `PRINT_UNIT_ID`.
+Mock mode always disables both actions. Both Cetak Antrian and Hadir &
+Sinkronisasi are manual buttons in Step 4; `Simpan` only registers the patient.
+An HTTP 200 only means the command was accepted — it is not proof that paper
+was printed or BPJS was updated. Batch print is opt-in per row (checkbox or
+Excel `Cetak` column); Hadir is never batched.
+
+`GET /api/health` also checks `${PRINT_API_BASE_URL}/healthz`. If the terminal
+is unreachable or degraded, `printBackendReady` is `false` and only the Cetak
+button is disabled. Hadir stays active because it uses a different backend.
+`Cetak Ulang` sends `force: true`; terminal `409 ALREADY_REQUESTED` and
+`ALREADY_PRINTED` responses are treated as already recorded, not as errors.
 
 Details: [`.env.example`](.env.example).
 
